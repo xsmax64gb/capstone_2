@@ -24,8 +24,19 @@ const swaggerDefinition = {
       name: "Auth",
       description: "Authentication endpoints",
     },
+    {
+      name: "Exercises",
+      description: "Exercise learning flow endpoints",
+    },
   ],
   components: {
+    securitySchemes: {
+      bearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+      },
+    },
     schemas: {
       BasicResponse: {
         type: "object",
