@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 import { Exercise, ExerciseAttempt } from "../models/index.js";
 import {
     DEFAULT_COVER_IMAGES,
-    EXERCISE_SEED,
     GENERIC_HINTS,
 } from "../helper/exercise.seed.js";
 
@@ -61,66 +60,12 @@ const normalizeExercise = (exercise, index = 0) => {
     };
 };
 
-const mapSeedQuestionToModel = (question, index) => {
-    const options = Array.isArray(question?.options) ? question.options : [];
-    const correctIndex = toSafeInt(question?.correctIndex, 0);
-    const correctOption = options[correctIndex] ?? options[0] ?? "";
-
-    return {
-        prompt: question?.prompt || question?.question || `Question ${index + 1}`,
-        question: question?.question || question?.prompt || `Question ${index + 1}`,
-        options,
-        correctIndex,
-        correctAnswer: correctOption,
-        explanation: question?.explanation || "",
-        score: 1,
-    };
-};
-
-const mapSeedExerciseToModel = (exercise) => {
-    const questions = Array.isArray(exercise?.questions)
-        ? exercise.questions.map((item, index) => mapSeedQuestionToModel(item, index))
-        : [];
-
-    return {
-        title: exercise?.title || "Exercise",
-        description: exercise?.description || "",
-        type: exercise?.type || "mcq",
-        level: exercise?.level || "A1",
-        topic: exercise?.topic || "general",
-        coverImage: exercise?.coverImage || DEFAULT_COVER_IMAGES[exercise?.topic] || DEFAULT_COVER_IMAGES.general,
-        skills: Array.isArray(exercise?.skills) ? exercise.skills : [],
-        durationMinutes: toSafeInt(exercise?.durationMinutes, 8),
-        questionCount: questions.length,
-        rewardsXp: toSafeInt(exercise?.rewardsXp, 0),
-        questions,
-        rewards: {
-            exp: toSafeInt(exercise?.rewardsXp, 0),
-        },
-    };
-};
-
-const ensureExercisesSeeded = async () => {
-    const total = await Exercise.countDocuments();
-    if (total > 0) {
-        return;
-    }
-
-    const payload = EXERCISE_SEED.map((item) => mapSeedExerciseToModel(item));
-    if (payload.length > 0) {
-        await Exercise.insertMany(payload);
-    }
-};
-
 const getExercises = async () => {
-    await ensureExercisesSeeded();
     const dbItems = await Exercise.find({}).lean();
     return dbItems.map((item, index) => normalizeExercise(item, index));
 };
 
 const getExerciseByObjectId = async (id) => {
-    await ensureExercisesSeeded();
-
     if (!mongoose.Types.ObjectId.isValid(id)) {
         return null;
     }

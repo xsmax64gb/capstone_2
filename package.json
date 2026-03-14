@@ -8,7 +8,9 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon index.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "seed:exercises": "node scripts/seed-exercises.js",
+    "seed:exercises:force": "node scripts/seed-exercises.js --force"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
