@@ -1,11 +1,11 @@
-require("dotenv").config();
+import "dotenv/config";
 
-const express = require("express");
-const cors = require("cors");
-const morgan = require("morgan");
+import cors from "cors";
+import express from "express";
+import morgan from "morgan";
 
-const connectDatabase = require("./config/db");
-const apiRoutes = require("./routes");
+import connectDatabase from "./config/db.js";
+import apiRoutes from "./routes/index.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;

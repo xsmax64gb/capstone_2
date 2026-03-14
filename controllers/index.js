@@ -6,6 +6,6 @@ const healthCheck = (_req, res) => {
   });
 };
 
-module.exports = {
+export {
   healthCheck,
 };
