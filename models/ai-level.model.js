@@ -113,7 +113,7 @@ const aiLevelSchema = new mongoose.Schema(
           const stageIds = stages.map((stage) => stage.stageId);
           return stageIds.length === new Set(stageIds).size;
         },
-        message: "Each stageId must be unique inside an ai level document",
+        message: "Cần đảm bảo stageId của các stage trong cùng một level là duy nhất",
       },
     },
     isActive: {

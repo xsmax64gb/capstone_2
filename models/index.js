@@ -13,8 +13,8 @@ export {
   Otp,
   PlacementTest,
   Vocabulary,
-  Exercise,
-  AiLevel,
+  Exercise, // lưu level của user sau khi làm bài test/ có thể update khi user tăng level để gợi ý bài tập phù hợp
+  AiLevel, 
   AiSession,
   AiMessage,
   UserProgress,
