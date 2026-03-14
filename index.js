@@ -3,8 +3,10 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import morgan from "morgan";
+import swaggerUi from "swagger-ui-express";
 
 import connectDatabase from "./config/db.js";
+import swaggerSpec from "./config/swagger.js";
 import apiRoutes from "./routes/index.js";
 
 const app = express();
@@ -22,6 +24,7 @@ app.get("/", (_req, res) => {
   });
 });
 
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use("/api", apiRoutes);
 
 app.use((req, res) => {

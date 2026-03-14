@@ -1,9 +1,7 @@
 import {
-  changePasswordWithOtp,
+  changePassword,
   login,
   register,
-  requestPasswordOtp,
-  requestRegisterOtp,
 } from "./auth.controller.js";
 
 const healthCheck = (_req, res) => {
@@ -15,10 +13,8 @@ const healthCheck = (_req, res) => {
 };
 
 export {
-  changePasswordWithOtp,
+  changePassword,
   healthCheck,
   login,
   register,
-  requestPasswordOtp,
-  requestRegisterOtp,
 };
