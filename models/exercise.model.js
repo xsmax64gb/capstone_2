@@ -4,11 +4,6 @@ import { LEVELS, EXERCISE_TYPES } from "./constants.js";
 
 const exerciseQuestionSchema = new mongoose.Schema(
   {
-    id: {
-      type: String,
-      trim: true,
-      default: "",
-    },
     prompt: {
       type: String,
       trim: true,
@@ -44,17 +39,11 @@ const exerciseQuestionSchema = new mongoose.Schema(
       min: 1,
     },
   },
-  { _id: false }
+  { _id: true }
 );
 
 const exerciseSchema = new mongoose.Schema(
   {
-    publicId: {
-      type: String,
-      trim: true,
-      index: true,
-      sparse: true,
-    },
     title: {
       type: String,
       required: true,

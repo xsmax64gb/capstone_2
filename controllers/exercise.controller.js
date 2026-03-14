@@ -3,8 +3,6 @@ import mongoose from "mongoose";
 import { Exercise, ExerciseAttempt } from "../models/index.js";
 import {
     DEFAULT_COVER_IMAGES,
-    EXERCISE_HISTORY_SEED,
-    EXERCISE_LEADERBOARD_SEED,
     EXERCISE_SEED,
     GENERIC_HINTS,
 } from "../helper/exercise.seed.js";
@@ -28,7 +26,7 @@ const normalizeQuestion = (question, index) => {
     }
 
     return {
-        id: question?.id || `q${index + 1}`,
+        id: String(question?._id || `q_${index + 1}`),
         prompt: question?.prompt || question?.question || "",
         options,
         correctIndex,
@@ -47,7 +45,7 @@ const normalizeExercise = (exercise, index = 0) => {
         (questions.length > 0 ? Math.max(6, Math.round(questions.length * 1.8)) : 8);
 
     return {
-        id: String(exercise?.publicId || exercise?.id || exercise?._id || `ex_${index + 1}`),
+        id: String(exercise?._id || `ex_${index + 1}`),
         _docId: exercise?._id ? String(exercise._id) : null,
         title: exercise?.title || `Exercise ${index + 1}`,
         description: exercise?.description || "",
@@ -63,46 +61,84 @@ const normalizeExercise = (exercise, index = 0) => {
     };
 };
 
-const getExercises = async () => {
-    const dbItems = await Exercise.find({}).lean();
-    if (dbItems.length === 0) {
-        return EXERCISE_SEED.map((item, index) => normalizeExercise(item, index));
+const mapSeedQuestionToModel = (question, index) => {
+    const options = Array.isArray(question?.options) ? question.options : [];
+    const correctIndex = toSafeInt(question?.correctIndex, 0);
+    const correctOption = options[correctIndex] ?? options[0] ?? "";
+
+    return {
+        prompt: question?.prompt || question?.question || `Question ${index + 1}`,
+        question: question?.question || question?.prompt || `Question ${index + 1}`,
+        options,
+        correctIndex,
+        correctAnswer: correctOption,
+        explanation: question?.explanation || "",
+        score: 1,
+    };
+};
+
+const mapSeedExerciseToModel = (exercise) => {
+    const questions = Array.isArray(exercise?.questions)
+        ? exercise.questions.map((item, index) => mapSeedQuestionToModel(item, index))
+        : [];
+
+    return {
+        title: exercise?.title || "Exercise",
+        description: exercise?.description || "",
+        type: exercise?.type || "mcq",
+        level: exercise?.level || "A1",
+        topic: exercise?.topic || "general",
+        coverImage: exercise?.coverImage || DEFAULT_COVER_IMAGES[exercise?.topic] || DEFAULT_COVER_IMAGES.general,
+        skills: Array.isArray(exercise?.skills) ? exercise.skills : [],
+        durationMinutes: toSafeInt(exercise?.durationMinutes, 8),
+        questionCount: questions.length,
+        rewardsXp: toSafeInt(exercise?.rewardsXp, 0),
+        questions,
+        rewards: {
+            exp: toSafeInt(exercise?.rewardsXp, 0),
+        },
+    };
+};
+
+const ensureExercisesSeeded = async () => {
+    const total = await Exercise.countDocuments();
+    if (total > 0) {
+        return;
     }
 
+    const payload = EXERCISE_SEED.map((item) => mapSeedExerciseToModel(item));
+    if (payload.length > 0) {
+        await Exercise.insertMany(payload);
+    }
+};
+
+const getExercises = async () => {
+    await ensureExercisesSeeded();
+    const dbItems = await Exercise.find({}).lean();
     return dbItems.map((item, index) => normalizeExercise(item, index));
 };
 
-const getExerciseByPublicId = async (id) => {
-    const all = await getExercises();
-    return all.find((item) => item.id === id || item._docId === id) || null;
+const getExerciseByObjectId = async (id) => {
+    await ensureExercisesSeeded();
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        return null;
+    }
+
+    const raw = await Exercise.findById(id).lean();
+    if (!raw) {
+        return null;
+    }
+
+    return normalizeExercise(raw, 0);
 };
 
 const getUserAttemptCount = async (userId) => {
     if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
-        return EXERCISE_HISTORY_SEED.length;
+        return 0;
     }
 
-    const total = await ExerciseAttempt.countDocuments({ userId });
-    return total > 0 ? total : EXERCISE_HISTORY_SEED.length;
-};
-
-const pickBestRecommended = (items, limit) => {
-    const scores = new Map();
-
-    inMemoryAttempts.forEach((attempt) => {
-        const previous = scores.get(attempt.exerciseId) || 0;
-        const ratio = attempt.total > 0 ? attempt.score / attempt.total : 0;
-        scores.set(attempt.exerciseId, previous + ratio);
-    });
-
-    return [...items]
-        .map((item) => ({
-            ...item,
-            recommendScore: (scores.get(item.id) || 0) * 10 + item.rewardsXp,
-        }))
-        .sort((a, b) => b.recommendScore - a.recommendScore)
-        .slice(0, limit)
-        .map(({ recommendScore, ...rest }) => rest);
+    return ExerciseAttempt.countDocuments({ userId });
 };
 
 const pickRecommendedByAttempts = (items, attempts, limit) => {
@@ -114,9 +150,10 @@ const pickRecommendedByAttempts = (items, attempts, limit) => {
 
     const scores = new Map();
     attempts.forEach((attempt) => {
-        const previous = scores.get(attempt.exerciseId) || 0;
+        const key = String(attempt.exerciseRef);
+        const previous = scores.get(key) || 0;
         const ratio = attempt.total > 0 ? attempt.score / attempt.total : 0;
-        scores.set(attempt.exerciseId, previous + ratio);
+        scores.set(key, previous + ratio);
     });
 
     return [...items]
@@ -229,20 +266,11 @@ const getRecommendedExercises = async (req, res) => {
         let attempts = [];
         if (userId && mongoose.Types.ObjectId.isValid(userId)) {
             attempts = await ExerciseAttempt.find({ userId })
-                .select("exerciseId score total")
+                .select("exerciseRef score total")
                 .lean();
         }
 
-        const baseAttempts =
-            attempts.length > 0
-                ? attempts
-                : EXERCISE_HISTORY_SEED.map((item) => ({
-                    exerciseId: item.exerciseId,
-                    score: item.score,
-                    total: item.total,
-                }));
-
-        const items = pickRecommendedByAttempts(all, baseAttempts, limit).map(buildPublicExercise);
+        const items = pickRecommendedByAttempts(all, attempts, limit).map(buildPublicExercise);
 
         return res.status(200).json({
             success: true,
@@ -261,7 +289,7 @@ const getExerciseById = async (req, res) => {
     try {
         const { id } = req.params;
         const all = await getExercises();
-        const exercise = all.find((item) => item.id === id || item._docId === id);
+        const exercise = all.find((item) => item.id === id);
 
         if (!exercise) {
             return res.status(404).json({
@@ -294,7 +322,7 @@ const getExerciseById = async (req, res) => {
 const getExerciseHints = async (req, res) => {
     try {
         const { id } = req.params;
-        const exercise = await getExerciseByPublicId(id);
+        const exercise = await getExerciseByObjectId(id);
 
         if (!exercise) {
             return res.status(404).json({
@@ -373,7 +401,7 @@ const buildLeaderboardFromAttempts = (attempts) => {
 const getExerciseLeaderboard = async (req, res) => {
     try {
         const { id } = req.params;
-        const exercise = await getExerciseByPublicId(id);
+        const exercise = await getExerciseByObjectId(id);
 
         if (!exercise) {
             return res.status(404).json({
@@ -382,13 +410,11 @@ const getExerciseLeaderboard = async (req, res) => {
             });
         }
 
-        const attempts = await ExerciseAttempt.find({ exerciseId: exercise.id })
+        const attempts = await ExerciseAttempt.find({ exerciseRef: exercise.id })
             .select("userId userName score total durationSec")
             .lean();
 
-        const leaderboard = attempts.length
-            ? buildLeaderboardFromAttempts(attempts)
-            : (EXERCISE_LEADERBOARD_SEED[exercise.id] || []);
+        const leaderboard = buildLeaderboardFromAttempts(attempts);
 
         return res.status(200).json({
             success: true,
@@ -423,22 +449,14 @@ const getExerciseHistory = async (req, res) => {
 
             items = dbAttempts.map((attempt) => ({
                 attemptId: String(attempt._id),
-                exerciseId: attempt.exerciseId,
+                exerciseId: String(attempt.exerciseRef),
                 submittedAt: attempt.submittedAt,
                 score: attempt.score,
                 total: attempt.total,
                 durationSec: attempt.durationSec,
                 userName: attempt.userName,
                 answers: attempt.answers,
-                exercise: buildPublicExercise(exerciseMap.get(attempt.exerciseId) || {}),
-                durationText: formatDuration(attempt.durationSec),
-            }));
-        }
-
-        if (!items.length) {
-            items = EXERCISE_HISTORY_SEED.slice(0, limit).map((attempt) => ({
-                ...attempt,
-                exercise: buildPublicExercise(exerciseMap.get(attempt.exerciseId) || {}),
+                exercise: buildPublicExercise(exerciseMap.get(String(attempt.exerciseRef)) || {}),
                 durationText: formatDuration(attempt.durationSec),
             }));
         }
@@ -459,7 +477,7 @@ const getExerciseHistory = async (req, res) => {
 const submitExerciseAttempt = async (req, res) => {
     try {
         const { id } = req.params;
-        const exercise = await getExerciseByPublicId(id);
+        const exercise = await getExerciseByObjectId(id);
 
         if (!exercise) {
             return res.status(404).json({
@@ -508,8 +526,7 @@ const submitExerciseAttempt = async (req, res) => {
                         : "Needs Retry";
 
         const attempt = await ExerciseAttempt.create({
-            exerciseId: exercise.id,
-            exerciseRef: exercise._docId && mongoose.Types.ObjectId.isValid(exercise._docId) ? exercise._docId : null,
+            exerciseRef: exercise.id,
             userId,
             userName,
             answers,
@@ -547,7 +564,7 @@ const getExerciseReview = async (req, res) => {
     try {
         const { id } = req.params;
         const { answers = "" } = req.query;
-        const exercise = await getExerciseByPublicId(id);
+        const exercise = await getExerciseByObjectId(id);
 
         if (!exercise) {
             return res.status(404).json({
