@@ -11,8 +11,11 @@ import {
     listExercises,
     submitExerciseAttempt,
 } from "../controllers/index.js";
+import { requireAuth } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
+
+router.use(requireAuth);
 
 router.get("/", listExercises);
 router.get("/summary", getExerciseSummary);

@@ -4,10 +4,21 @@ import { LEVELS, EXERCISE_TYPES } from "./constants.js";
 
 const exerciseQuestionSchema = new mongoose.Schema(
   {
+    id: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    prompt: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     question: {
       type: String,
-      required: true,
+      required: false,
       trim: true,
+      default: "",
     },
     options: {
       type: [String],
@@ -16,6 +27,11 @@ const exerciseQuestionSchema = new mongoose.Schema(
     correctAnswer: {
       type: mongoose.Schema.Types.Mixed,
       required: true,
+    },
+    correctIndex: {
+      type: Number,
+      min: 0,
+      default: null,
     },
     explanation: {
       type: String,
@@ -33,6 +49,12 @@ const exerciseQuestionSchema = new mongoose.Schema(
 
 const exerciseSchema = new mongoose.Schema(
   {
+    publicId: {
+      type: String,
+      trim: true,
+      index: true,
+      sparse: true,
+    },
     title: {
       type: String,
       required: true,
@@ -58,6 +80,30 @@ const exerciseSchema = new mongoose.Schema(
       trim: true,
       default: "general",
     },
+    coverImage: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    skills: {
+      type: [String],
+      default: [],
+    },
+    durationMinutes: {
+      type: Number,
+      min: 1,
+      default: 8,
+    },
+    questionCount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    rewardsXp: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
     questions: {
       type: [exerciseQuestionSchema],
       default: [],
@@ -77,5 +123,23 @@ const exerciseSchema = new mongoose.Schema(
 );
 
 exerciseSchema.index({ level: 1, topic: 1, type: 1 });
+
+exerciseSchema.pre("save", function updateDerivedFields(next) {
+  if (!this.questionCount || this.questionCount <= 0) {
+    this.questionCount = Array.isArray(this.questions) ? this.questions.length : 0;
+  }
+
+  if (this.rewardsXp === null || this.rewardsXp === undefined) {
+    this.rewardsXp = this.rewards?.exp ?? 0;
+  }
+
+  if ((!this.rewards || this.rewards.exp === undefined || this.rewards.exp === null) && this.rewardsXp !== null) {
+    this.rewards = {
+      exp: this.rewardsXp,
+    };
+  }
+
+  next();
+});
 
 export default mongoose.models.Exercise || mongoose.model("Exercise", exerciseSchema);

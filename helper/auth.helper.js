@@ -18,6 +18,10 @@ const signAccessToken = (user) => {
   );
 };
 
+const verifyAccessToken = (token) => {
+  return jwt.verify(token, process.env.JWT_SECRET || DEFAULT_JWT_SECRET);
+};
+
 const sanitizeUser = (user) => {
   return {
     id: user._id,
@@ -36,4 +40,5 @@ const sanitizeUser = (user) => {
 export {
   sanitizeUser,
   signAccessToken,
+  verifyAccessToken,
 };
