@@ -1,3 +1,11 @@
+import {
+  changePasswordWithOtp,
+  login,
+  register,
+  requestPasswordOtp,
+  requestRegisterOtp,
+} from "./auth.controller.js";
+
 const healthCheck = (_req, res) => {
   res.status(200).json({
     success: true,
@@ -7,5 +15,10 @@ const healthCheck = (_req, res) => {
 };
 
 export {
+  changePasswordWithOtp,
   healthCheck,
+  login,
+  register,
+  requestPasswordOtp,
+  requestRegisterOtp,
 };
