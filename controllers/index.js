@@ -2,6 +2,8 @@ import {
   changePassword,
   login,
   register,
+  sendChangePasswordOtp,
+  sendRegisterOtp,
 } from "./auth.controller.js";
 import {
   getExerciseById,
@@ -36,5 +38,7 @@ export {
   listExercises,
   login,
   register,
+  sendChangePasswordOtp,
+  sendRegisterOtp,
   submitExerciseAttempt,
 };

@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 
 import { User, UserProgress } from "../models/index.js";
 import { sanitizeUser, signAccessToken } from "../helper/auth.helper.js";
+import { issueOtp, verifyOtp } from "../helper/otp.helper.js";
 
 const SALT_ROUNDS = 10;
 
@@ -11,12 +12,12 @@ const isValidEmail = (email) => {
 
 const register = async (req, res) => {
   try {
-    const { fullName, email, password } = req.body;
+    const { fullName, email, password, otp } = req.body;
 
-    if (!fullName || !email || !password) {
+    if (!fullName || !email || !password || !otp) {
       return res.status(400).json({
         success: false,
-        message: "fullName, email, and password are required",
+        message: "fullName, email, password, and otp are required",
       });
     }
 
@@ -41,6 +42,19 @@ const register = async (req, res) => {
       return res.status(409).json({
         success: false,
         message: "Email is already registered",
+      });
+    }
+
+    const otpVerification = await verifyOtp({
+      email: normalizedEmail,
+      purpose: "register",
+      code: otp,
+    });
+
+    if (!otpVerification.valid) {
+      return res.status(400).json({
+        success: false,
+        message: otpVerification.message,
       });
     }
 
@@ -71,6 +85,51 @@ const register = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || "Register failed",
+    });
+  }
+};
+
+const sendRegisterOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "email is required",
+      });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid email is required",
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    const existingUser = await User.findOne({ email: normalizedEmail });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "Email is already registered",
+      });
+    }
+
+    await issueOtp({
+      email: normalizedEmail,
+      purpose: "register",
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to send OTP",
     });
   }
 };
@@ -125,12 +184,12 @@ const login = async (req, res) => {
 
 const changePassword = async (req, res) => {
   try {
-    const { email, oldPassword, newPassword } = req.body;
+    const { email, newPassword, otp } = req.body;
 
-    if (!email || !oldPassword || !newPassword) {
+    if (!email || !newPassword || !otp) {
       return res.status(400).json({
         success: false,
-        message: "email, oldPassword, and newPassword are required",
+        message: "email, newPassword, and otp are required",
       });
     }
 
@@ -151,12 +210,16 @@ const changePassword = async (req, res) => {
       });
     }
 
-    const isOldPasswordMatched = await bcrypt.compare(oldPassword, user.passwordHash);
+    const otpVerification = await verifyOtp({
+      email: normalizedEmail,
+      purpose: "change_password",
+      code: otp,
+    });
 
-    if (!isOldPasswordMatched) {
+    if (!otpVerification.valid) {
       return res.status(401).json({
         success: false,
-        message: "Current password is incorrect",
+        message: otpVerification.message,
       });
     }
 
@@ -175,8 +238,55 @@ const changePassword = async (req, res) => {
   }
 };
 
+const sendChangePasswordOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "email is required",
+      });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid email is required",
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    await issueOtp({
+      email: normalizedEmail,
+      purpose: "change_password",
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to send OTP",
+    });
+  }
+};
+
 export {
   changePassword,
   login,
   register,
+  sendChangePasswordOtp,
+  sendRegisterOtp,
 };

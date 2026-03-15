@@ -115,7 +115,7 @@ const swaggerDefinition = {
       },
       RegisterBody: {
         type: "object",
-        required: ["fullName", "email", "password"],
+        required: ["fullName", "email", "password", "otp"],
         properties: {
           fullName: {
             type: "string",
@@ -128,6 +128,20 @@ const swaggerDefinition = {
           password: {
             type: "string",
             example: "123456",
+          },
+          otp: {
+            type: "string",
+            example: "123456",
+          },
+        },
+      },
+      SendOtpBody: {
+        type: "object",
+        required: ["email"],
+        properties: {
+          email: {
+            type: "string",
+            example: "user@example.com",
           },
         },
       },
@@ -147,19 +161,19 @@ const swaggerDefinition = {
       },
       ChangePasswordBody: {
         type: "object",
-        required: ["email", "oldPassword", "newPassword"],
+        required: ["email", "newPassword", "otp"],
         properties: {
           email: {
             type: "string",
             example: "user@example.com",
           },
-          oldPassword: {
-            type: "string",
-            example: "123456",
-          },
           newPassword: {
             type: "string",
             example: "654321",
+          },
+          otp: {
+            type: "string",
+            example: "123456",
           },
         },
       },

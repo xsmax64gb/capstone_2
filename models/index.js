@@ -7,6 +7,7 @@ import AiLevel from "./ai-level.model.js";
 import AiSession from "./ai-session.model.js";
 import AiMessage from "./ai-message.model.js";
 import UserProgress from "./user-progress.model.js";
+import Otp from "./otp.model.js";
 
 export {
   User,
@@ -18,4 +19,5 @@ export {
   AiSession,
   AiMessage,
   UserProgress,
+  Otp,
 };

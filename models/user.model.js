@@ -35,7 +35,7 @@ const userSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
-    onboardingDone: {
+    onboardingDone: { //test trình độ đầu vào
       type: Boolean,
       default: false,
     },
