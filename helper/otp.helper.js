@@ -29,17 +29,58 @@ const ensureSendGridConfigured = () => {
     return fromEmail;
 };
 
-const sendOtpEmail = async ({ email, code, purpose }) => {
-    const fromEmail = ensureSendGridConfigured();
-    const emailTitle = purpose === "register" ? "Register OTP" : "Password Change OTP";
+const getSendGridErrorInfo = (error) => {
+    const responseBody = error?.response?.body || null;
+    const statusCode = error?.code || error?.response?.statusCode || "unknown";
+    const firstError = Array.isArray(responseBody?.errors) ? responseBody.errors[0] : null;
 
-    await sendgridMail.send({
-        to: email,
-        from: fromEmail,
-        subject: `[ELapp] ${emailTitle}`,
-        text: `Your OTP code is: ${code}. It will expire in ${OTP_EXPIRES_MINUTES} minutes.`,
-        html: `<p>Your OTP code is: <strong>${code}</strong></p><p>This code will expire in ${OTP_EXPIRES_MINUTES} minutes.</p>`,
-    });
+    return {
+        statusCode,
+        responseBody,
+        detailMessage: firstError?.message || error?.message || "SendGrid request failed",
+        detailField: firstError?.field || null,
+        detailHelp: firstError?.help || null,
+    };
+};
+
+const sendOtpEmail = async ({ email, code, purpose }) => {
+    try {
+        const fromEmail = ensureSendGridConfigured();
+        const emailTitle = purpose === "register" ? "Register OTP" : "Password Change OTP";
+
+        await sendgridMail.send({
+            to: email,
+            from: fromEmail,
+            subject: `[ELapp] ${emailTitle}`,
+            text: `Your OTP code is: ${code}. It will expire in ${OTP_EXPIRES_MINUTES} minutes.`,
+            html: `<p>Your OTP code is: <strong>${code}</strong></p><p>This code will expire in ${OTP_EXPIRES_MINUTES} minutes.</p>`,
+        });
+    } catch (error) {
+        const {
+            statusCode,
+            responseBody,
+            detailMessage,
+            detailField,
+            detailHelp,
+        } = getSendGridErrorInfo(error);
+
+        console.error("[OTP][SendGrid] Failed to send OTP email", {
+            purpose,
+            toEmail: email,
+            statusCode,
+            responseBody,
+            detailMessage,
+            detailField,
+            detailHelp,
+            rawError: error?.message,
+        });
+
+        if (responseBody) {
+            console.error("[OTP][SendGrid] Response body", JSON.stringify(responseBody, null, 2));
+        }
+
+        throw new Error(`SendGrid error (${statusCode}): ${detailMessage}`);
+    }
 };
 
 const issueOtp = async ({ email, purpose }) => {

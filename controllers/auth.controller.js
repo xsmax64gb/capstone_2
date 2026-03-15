@@ -127,6 +127,13 @@ const sendRegisterOtp = async (req, res) => {
       message: "OTP sent successfully",
     });
   } catch (error) {
+    console.error("[Auth][sendRegisterOtp] Failed", {
+      email: req.body?.email,
+      message: error?.message,
+      stack: error?.stack,
+      sendgridResponse: error?.response?.body,
+    });
+
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to send OTP",
@@ -217,7 +224,7 @@ const changePassword = async (req, res) => {
     });
 
     if (!otpVerification.valid) {
-      return res.status(401).json({
+      return res.status(400).json({
         success: false,
         message: otpVerification.message,
       });
@@ -276,6 +283,13 @@ const sendChangePasswordOtp = async (req, res) => {
       message: "OTP sent successfully",
     });
   } catch (error) {
+    console.error("[Auth][sendChangePasswordOtp] Failed", {
+      email: req.body?.email,
+      message: error?.message,
+      stack: error?.stack,
+      sendgridResponse: error?.response?.body,
+    });
+
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to send OTP",
