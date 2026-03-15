@@ -16,6 +16,7 @@ const generateOtpCode = () => {
 const ensureSendGridConfigured = () => {
     const apiKey = process.env.SENDGRID_API_KEY;
     const fromEmail = process.env.SENDGRID_FROM_EMAIL;
+    const fromName = process.env.SENDGRID_FROM_NAME || "SmartLingo";
 
     if (!apiKey) {
         throw new Error("SENDGRID_API_KEY is not configured");
@@ -26,7 +27,10 @@ const ensureSendGridConfigured = () => {
     }
 
     sendgridMail.setApiKey(apiKey);
-    return fromEmail;
+    return {
+        fromEmail,
+        fromName,
+    };
 };
 
 const getSendGridErrorInfo = (error) => {
@@ -45,15 +49,34 @@ const getSendGridErrorInfo = (error) => {
 
 const sendOtpEmail = async ({ email, code, purpose }) => {
     try {
-        const fromEmail = ensureSendGridConfigured();
+                const { fromEmail, fromName } = ensureSendGridConfigured();
         const emailTitle = purpose === "register" ? "Register OTP" : "Password Change OTP";
 
         await sendgridMail.send({
             to: email,
-            from: fromEmail,
-            subject: `[ELapp] ${emailTitle}`,
-            text: `Your OTP code is: ${code}. It will expire in ${OTP_EXPIRES_MINUTES} minutes.`,
-            html: `<p>Your OTP code is: <strong>${code}</strong></p><p>This code will expire in ${OTP_EXPIRES_MINUTES} minutes.</p>`,
+                        from: {
+                                email: fromEmail,
+                                name: fromName,
+                        },
+                        subject: `[SmartLingo] ${emailTitle}`,
+                        text: `Your OTP code is: ${code}. It will expire in ${OTP_EXPIRES_MINUTES} minutes.`,
+                        html: `
+                            <div style="margin:0;padding:24px;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
+                                <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
+                                    <div style="padding:20px 24px;background:#0f172a;color:#f8fafc;">
+                                        <h2 style="margin:0;font-size:20px;">SmartLingo</h2>
+                                        <p style="margin:8px 0 0;font-size:13px;opacity:0.9;">Email verification</p>
+                                    </div>
+                                    <div style="padding:24px;">
+                                        <p style="margin:0 0 12px;font-size:14px;color:#334155;">Use this OTP to continue:</p>
+                                        <div style="display:inline-block;padding:12px 20px;border-radius:10px;background:#f8fafc;border:1px solid #cbd5e1;font-size:28px;letter-spacing:8px;font-weight:700;color:#0f172a;">
+                                            ${code}
+                                        </div>
+                                        <p style="margin:16px 0 0;font-size:13px;color:#64748b;">This OTP expires in ${OTP_EXPIRES_MINUTES} minutes.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        `,
         });
     } catch (error) {
         const {
@@ -110,16 +133,16 @@ const verifyOtp = async ({ email, purpose, code }) => {
     const otp = await Otp.findOne({ email, purpose });
 
     if (!otp) {
-        return { valid: false, message: "OTP not found or expired" };
+        return { valid: false, message: "Không tìm thấy OTP, vui lòng gửi lại mã mới" };
     }
 
     if (otp.expiresAt.getTime() <= Date.now()) {
         await Otp.deleteOne({ _id: otp._id });
-        return { valid: false, message: "OTP has expired" };
+        return { valid: false, message: "Mã OTP đã hết hạn, vui lòng gửi lại mã mới" };
     }
 
     if (otp.codeHash !== toOtpHash(code)) {
-        return { valid: false, message: "Invalid OTP" };
+        return { valid: false, message: "Mã OTP không đúng" };
     }
 
     await Otp.deleteOne({ _id: otp._id });
