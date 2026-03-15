@@ -49,18 +49,18 @@ const getSendGridErrorInfo = (error) => {
 
 const sendOtpEmail = async ({ email, code, purpose }) => {
     try {
-                const { fromEmail, fromName } = ensureSendGridConfigured();
+        const { fromEmail, fromName } = ensureSendGridConfigured();
         const emailTitle = purpose === "register" ? "Register OTP" : "Password Change OTP";
 
         await sendgridMail.send({
             to: email,
-                        from: {
-                                email: fromEmail,
-                                name: fromName,
-                        },
-                        subject: `[SmartLingo] ${emailTitle}`,
-                        text: `Your OTP code is: ${code}. It will expire in ${OTP_EXPIRES_MINUTES} minutes.`,
-                        html: `
+            from: {
+                email: fromEmail,
+                name: fromName,
+            },
+            subject: `[SmartLingo] ${emailTitle}`,
+            text: `Your OTP code is: ${code}. It will expire in ${OTP_EXPIRES_MINUTES} minutes.`,
+            html: `
                             <div style="margin:0;padding:24px;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
                                 <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
                                     <div style="padding:20px 24px;background:#0f172a;color:#f8fafc;">
