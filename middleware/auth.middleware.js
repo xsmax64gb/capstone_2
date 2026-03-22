@@ -57,7 +57,26 @@ const requireAuth = (req, res, next) => {
     return next();
 };
 
+const requireAdmin = (req, res, next) => {
+    if (!req.user?.id) {
+        return res.status(401).json({
+            success: false,
+            message: "Unauthorized",
+        });
+    }
+
+    if (req.user.role !== "admin") {
+        return res.status(403).json({
+            success: false,
+            message: "Admin access required",
+        });
+    }
+
+    return next();
+};
+
 export {
     attachUserFromToken,
     requireAuth,
+    requireAdmin,
 };

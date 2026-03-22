@@ -6,6 +6,13 @@ import {
   sendRegisterOtp,
 } from "./auth.controller.js";
 import {
+  getAdminContent,
+  getAdminOverview,
+  getAdminReports,
+  getAdminSettings,
+  getAdminUsers,
+} from "./admin.controller.js";
+import {
   getExerciseById,
   getExerciseHints,
   getExerciseHistory,
@@ -27,6 +34,11 @@ const healthCheck = (_req, res) => {
 
 export {
   changePassword,
+  getAdminContent,
+  getAdminOverview,
+  getAdminReports,
+  getAdminSettings,
+  getAdminUsers,
   getExerciseById,
   getExerciseHints,
   getExerciseHistory,
