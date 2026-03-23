@@ -1,4 +1,5 @@
 import {
+  AiLevel,
   AiSession,
   Exercise,
   ExerciseAttempt,
@@ -7,12 +8,39 @@ import {
 } from "../models/index.js";
 import {
   AI_SESSION_STATUSES,
-  EXERCISE_TYPES,
   LEVELS,
   USER_ROLES,
 } from "../models/constants.js";
+import { uploadImageFile } from "../helper/upload.helper.js";
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+const parseStringArray = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
+const parseStructuredArray = (value, fieldName) => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (value === undefined || value === null || value === "") {
+    return [];
+  }
+
+  throw new Error(`${fieldName} must be an array`);
+};
 
 const toIsoDate = (value) => {
   const date = value instanceof Date ? value : new Date(value);
@@ -76,6 +104,10 @@ const serializeExercise = (exercise) => ({
   level: exercise.level,
   type: exercise.type,
   topic: exercise.topic || "general",
+  durationMinutes: exercise.durationMinutes ?? 8,
+  rewardsXp: exercise.rewardsXp ?? exercise.rewards?.exp ?? 0,
+  coverImage: exercise.coverImage || "",
+  skills: Array.isArray(exercise.skills) ? exercise.skills : [],
   questionCount:
     typeof exercise.questionCount === "number"
       ? exercise.questionCount
@@ -90,8 +122,47 @@ const serializeVocabulary = (item) => ({
   id: String(item._id),
   word: item.word,
   meaning: item.meaning,
+  phonetic: item.phonetic || "",
+  example: item.example || "",
   level: item.level,
   topic: item.topic || "general",
+  imageUrl: item.imageUrl || "",
+  audioUrl: item.audioUrl || "",
+  createdAt: toIsoDate(item.createdAt),
+  updatedAt: toIsoDate(item.updatedAt),
+});
+
+const serializeAiLevel = (item) => ({
+  id: String(item._id),
+  level: item.level,
+  title: item.title,
+  description: item.description || "",
+  minPlacementLevel: item.unlockRequirement?.minPlacementLevel || item.level,
+  isActive: Boolean(item.isActive),
+  stageCount: Array.isArray(item.stages) ? item.stages.length : 0,
+  stages: Array.isArray(item.stages)
+    ? item.stages.map((stage) => ({
+        stageId: stage.stageId,
+        name: stage.name,
+        order: stage.order,
+        type: stage.type,
+        context: stage.context,
+        aiRole: stage.aiRole,
+        objective: stage.objective,
+        systemPrompt: stage.systemPrompt,
+        suggestedVocabulary: Array.isArray(stage.suggestedVocabulary)
+          ? stage.suggestedVocabulary
+          : [],
+        passRules: {
+          minScore: stage.passRules?.minScore ?? 60,
+          minTurns: stage.passRules?.minTurns ?? 4,
+        },
+        rewards: {
+          exp: stage.rewards?.exp ?? 0,
+          unlockNextLevel: stage.rewards?.unlockNextLevel ?? null,
+        },
+      }))
+    : [],
   createdAt: toIsoDate(item.createdAt),
   updatedAt: toIsoDate(item.updatedAt),
 });
@@ -238,48 +309,416 @@ const getAdminUsers = async (_req, res) => {
   }
 };
 
-const getAdminContent = async (_req, res) => {
+const getAdminExercises = async (_req, res) => {
   try {
-    const [exercises, vocabularies] = await Promise.all([
-      Exercise.find({})
-        .sort({ createdAt: -1 })
-        .select("title description level type topic questionCount questions createdAt updatedAt")
-        .lean(),
-      Vocabulary.find({})
-        .sort({ createdAt: -1 })
-        .select("word meaning level topic createdAt updatedAt")
-        .lean(),
-    ]);
-
-    const summary = {
-      totalExercises: exercises.length,
-      totalVocabulary: vocabularies.length,
-      totalQuestions: exercises.reduce((sum, item) => {
-        if (typeof item.questionCount === "number") {
-          return sum + item.questionCount;
-        }
-
-        return sum + (Array.isArray(item.questions) ? item.questions.length : 0);
-      }, 0),
-      exerciseTypeBreakdown: EXERCISE_TYPES.map((type) => ({
-        type,
-        count: exercises.filter((item) => item.type === type).length,
-      })),
-    };
+    const exercises = await Exercise.find({})
+      .sort({ updatedAt: -1 })
+      .lean();
 
     return res.status(200).json({
       success: true,
-      message: "Admin content fetched successfully",
+      message: "Admin exercises fetched successfully",
       data: {
-        summary,
-        recentExercises: exercises.slice(0, 8).map(serializeExercise),
-        recentVocabulary: vocabularies.slice(0, 8).map(serializeVocabulary),
+        items: exercises.map(serializeExercise),
       },
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: error.message || "Failed to fetch admin content",
+      message: error.message || "Failed to fetch admin exercises",
+    });
+  }
+};
+
+const createAdminExercise = async (req, res) => {
+  try {
+    const {
+      title,
+      description = "",
+      type,
+      level,
+      topic = "general",
+      coverImage = "",
+      skills = [],
+      durationMinutes = 8,
+      rewardsXp = 0,
+      questions = [],
+    } = req.body;
+
+    if (!title || !type || !level) {
+      return res.status(400).json({
+        success: false,
+        message: "title, type, and level are required",
+      });
+    }
+
+    const exercise = await Exercise.create({
+      title: String(title).trim(),
+      description: String(description).trim(),
+      type,
+      level,
+      topic: String(topic).trim() || "general",
+      coverImage: String(coverImage).trim(),
+      skills: parseStringArray(skills),
+      durationMinutes: Number(durationMinutes) || 8,
+      rewardsXp: Number(rewardsXp) || 0,
+      questions: parseStructuredArray(questions, "questions"),
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Exercise created successfully",
+      data: serializeExercise(exercise.toObject()),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to create exercise",
+    });
+  }
+};
+
+const updateAdminExercise = async (req, res) => {
+  try {
+    const exercise = await Exercise.findById(req.params.id);
+
+    if (!exercise) {
+      return res.status(404).json({
+        success: false,
+        message: "Exercise not found",
+      });
+    }
+
+    const payload = req.body || {};
+
+    if (payload.title !== undefined) exercise.title = String(payload.title).trim();
+    if (payload.description !== undefined) exercise.description = String(payload.description).trim();
+    if (payload.type !== undefined) exercise.type = payload.type;
+    if (payload.level !== undefined) exercise.level = payload.level;
+    if (payload.topic !== undefined) exercise.topic = String(payload.topic).trim() || "general";
+    if (payload.coverImage !== undefined) exercise.coverImage = String(payload.coverImage).trim();
+    if (payload.skills !== undefined) exercise.skills = parseStringArray(payload.skills);
+    if (payload.durationMinutes !== undefined) exercise.durationMinutes = Number(payload.durationMinutes) || 8;
+    if (payload.rewardsXp !== undefined) exercise.rewardsXp = Number(payload.rewardsXp) || 0;
+    if (payload.questions !== undefined) {
+      exercise.questions = parseStructuredArray(payload.questions, "questions");
+    }
+
+    await exercise.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Exercise updated successfully",
+      data: serializeExercise(exercise.toObject()),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update exercise",
+    });
+  }
+};
+
+const deleteAdminExercise = async (req, res) => {
+  try {
+    const exercise = await Exercise.findByIdAndDelete(req.params.id);
+
+    if (!exercise) {
+      return res.status(404).json({
+        success: false,
+        message: "Exercise not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Exercise deleted successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to delete exercise",
+    });
+  }
+};
+
+const getAdminVocabulary = async (_req, res) => {
+  try {
+    const items = await Vocabulary.find({})
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      message: "Admin vocabulary fetched successfully",
+      data: {
+        items: items.map(serializeVocabulary),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch vocabulary",
+    });
+  }
+};
+
+const createAdminVocabulary = async (req, res) => {
+  try {
+    const {
+      word,
+      meaning,
+      phonetic = "",
+      example = "",
+      level,
+      topic = "general",
+      imageUrl = "",
+      audioUrl = "",
+    } = req.body;
+
+    if (!word || !meaning || !level) {
+      return res.status(400).json({
+        success: false,
+        message: "word, meaning, and level are required",
+      });
+    }
+
+    const item = await Vocabulary.create({
+      word: String(word).trim(),
+      meaning: String(meaning).trim(),
+      phonetic: String(phonetic).trim(),
+      example: String(example).trim(),
+      level,
+      topic: String(topic).trim() || "general",
+      imageUrl: String(imageUrl).trim(),
+      audioUrl: String(audioUrl).trim(),
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Vocabulary created successfully",
+      data: serializeVocabulary(item.toObject()),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to create vocabulary",
+    });
+  }
+};
+
+const updateAdminVocabulary = async (req, res) => {
+  try {
+    const item = await Vocabulary.findById(req.params.id);
+
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "Vocabulary not found",
+      });
+    }
+
+    const payload = req.body || {};
+
+    if (payload.word !== undefined) item.word = String(payload.word).trim();
+    if (payload.meaning !== undefined) item.meaning = String(payload.meaning).trim();
+    if (payload.phonetic !== undefined) item.phonetic = String(payload.phonetic).trim();
+    if (payload.example !== undefined) item.example = String(payload.example).trim();
+    if (payload.level !== undefined) item.level = payload.level;
+    if (payload.topic !== undefined) item.topic = String(payload.topic).trim() || "general";
+    if (payload.imageUrl !== undefined) item.imageUrl = String(payload.imageUrl).trim();
+    if (payload.audioUrl !== undefined) item.audioUrl = String(payload.audioUrl).trim();
+
+    await item.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Vocabulary updated successfully",
+      data: serializeVocabulary(item.toObject()),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update vocabulary",
+    });
+  }
+};
+
+const deleteAdminVocabulary = async (req, res) => {
+  try {
+    const item = await Vocabulary.findByIdAndDelete(req.params.id);
+
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "Vocabulary not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Vocabulary deleted successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to delete vocabulary",
+    });
+  }
+};
+
+const getAdminAiLevels = async (_req, res) => {
+  try {
+    const items = await AiLevel.find({})
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      message: "Admin AI levels fetched successfully",
+      data: {
+        items: items.map(serializeAiLevel),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch AI levels",
+    });
+  }
+};
+
+const uploadAdminImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Image file is required",
+      });
+    }
+
+    const uploadResult = await uploadImageFile(req.file, {
+      folder: req.body?.folder,
+      publicId: req.body?.publicId,
+      tags: ["admin-upload"],
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Image uploaded successfully",
+      data: uploadResult,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to upload image",
+    });
+  }
+};
+
+const createAdminAiLevel = async (req, res) => {
+  try {
+    const {
+      level,
+      title,
+      description = "",
+      minPlacementLevel,
+      isActive = true,
+      stages = [],
+    } = req.body;
+
+    if (!level || !title || !minPlacementLevel) {
+      return res.status(400).json({
+        success: false,
+        message: "level, title, and minPlacementLevel are required",
+      });
+    }
+
+    const item = await AiLevel.create({
+      level,
+      title: String(title).trim(),
+      description: String(description).trim(),
+      unlockRequirement: {
+        minPlacementLevel,
+      },
+      isActive: Boolean(isActive),
+      stages: parseStructuredArray(stages, "stages"),
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "AI level created successfully",
+      data: serializeAiLevel(item.toObject()),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to create AI level",
+    });
+  }
+};
+
+const updateAdminAiLevel = async (req, res) => {
+  try {
+    const item = await AiLevel.findById(req.params.id);
+
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "AI level not found",
+      });
+    }
+
+    const payload = req.body || {};
+
+    if (payload.level !== undefined) item.level = payload.level;
+    if (payload.title !== undefined) item.title = String(payload.title).trim();
+    if (payload.description !== undefined) item.description = String(payload.description).trim();
+    if (payload.minPlacementLevel !== undefined) {
+      item.unlockRequirement = {
+        ...item.unlockRequirement,
+        minPlacementLevel: payload.minPlacementLevel,
+      };
+    }
+    if (payload.isActive !== undefined) item.isActive = Boolean(payload.isActive);
+    if (payload.stages !== undefined) {
+      item.stages = parseStructuredArray(payload.stages, "stages");
+    }
+
+    await item.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "AI level updated successfully",
+      data: serializeAiLevel(item.toObject()),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update AI level",
+    });
+  }
+};
+
+const deleteAdminAiLevel = async (req, res) => {
+  try {
+    const item = await AiLevel.findByIdAndDelete(req.params.id);
+
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "AI level not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "AI level deleted successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to delete AI level",
     });
   }
 };
@@ -400,55 +839,21 @@ const getAdminReports = async (_req, res) => {
   }
 };
 
-const getAdminSettings = async (req, res) => {
-  try {
-    const [userCount, adminCount] = await Promise.all([
-      User.countDocuments({}),
-      User.countDocuments({ role: "admin" }),
-    ]);
-
-    return res.status(200).json({
-      success: true,
-      message: "Admin settings fetched successfully",
-      data: {
-        environment: {
-          nodeEnv: process.env.NODE_ENV || "development",
-          port: process.env.PORT || "5000",
-          apiBasePath: "/api",
-          swaggerEnabled: true,
-        },
-        access: {
-          currentAdmin: req.user
-            ? {
-                id: req.user.id,
-                email: req.user.email,
-                fullName: req.user.fullName,
-                role: req.user.role,
-              }
-            : null,
-          totalUsers: userCount,
-          adminUsers: adminCount,
-        },
-        catalogs: {
-          roles: USER_ROLES,
-          levels: LEVELS,
-          exerciseTypes: EXERCISE_TYPES,
-          aiSessionStatuses: AI_SESSION_STATUSES,
-        },
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to fetch admin settings",
-    });
-  }
-};
-
 export {
-  getAdminContent,
+  createAdminAiLevel,
+  createAdminExercise,
+  createAdminVocabulary,
+  deleteAdminAiLevel,
+  deleteAdminExercise,
+  deleteAdminVocabulary,
+  getAdminAiLevels,
+  getAdminExercises,
   getAdminOverview,
   getAdminReports,
-  getAdminSettings,
   getAdminUsers,
+  getAdminVocabulary,
+  updateAdminAiLevel,
+  updateAdminExercise,
+  updateAdminVocabulary,
+  uploadAdminImage,
 };

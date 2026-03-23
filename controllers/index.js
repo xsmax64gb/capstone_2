@@ -6,11 +6,21 @@ import {
   sendRegisterOtp,
 } from "./auth.controller.js";
 import {
-  getAdminContent,
+  createAdminAiLevel,
+  createAdminExercise,
+  createAdminVocabulary,
+  deleteAdminAiLevel,
+  deleteAdminExercise,
+  deleteAdminVocabulary,
+  getAdminAiLevels,
+  getAdminExercises,
   getAdminOverview,
   getAdminReports,
-  getAdminSettings,
   getAdminUsers,
+  getAdminVocabulary,
+  updateAdminAiLevel,
+  updateAdminExercise,
+  updateAdminVocabulary,
 } from "./admin.controller.js";
 import {
   getExerciseById,
@@ -34,11 +44,18 @@ const healthCheck = (_req, res) => {
 
 export {
   changePassword,
-  getAdminContent,
+  createAdminAiLevel,
+  createAdminExercise,
+  createAdminVocabulary,
+  deleteAdminAiLevel,
+  deleteAdminExercise,
+  deleteAdminVocabulary,
+  getAdminAiLevels,
+  getAdminExercises,
   getAdminOverview,
   getAdminReports,
-  getAdminSettings,
   getAdminUsers,
+  getAdminVocabulary,
   getExerciseById,
   getExerciseHints,
   getExerciseHistory,
@@ -53,4 +70,7 @@ export {
   sendChangePasswordOtp,
   sendRegisterOtp,
   submitExerciseAttempt,
+  updateAdminAiLevel,
+  updateAdminExercise,
+  updateAdminVocabulary,
 };
