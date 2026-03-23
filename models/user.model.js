@@ -48,6 +48,27 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    avatarUrl: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    bio: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 500,
+    },
+    nativeLanguage: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    timezone: {
+      type: String,
+      trim: true,
+      default: "",
+    },
   },
   {
     collection: "users",

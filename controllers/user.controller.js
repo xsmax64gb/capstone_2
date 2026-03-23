@@ -6,6 +6,8 @@ import {
   Vocabulary,
 } from "../models/index.js";
 import { AI_SESSION_STATUSES, LEVELS, USER_ROLES } from "../models/constants.js";
+import { sanitizeUser } from "../helper/auth.helper.js";
+import { uploadImageFile } from "../helper/upload.helper.js";
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
@@ -56,6 +58,10 @@ const serializeUser = (user) => ({
   id: String(user._id),
   fullName: user.fullName,
   email: user.email,
+  avatarUrl: user.avatarUrl || "",
+  bio: user.bio || "",
+  nativeLanguage: user.nativeLanguage || "",
+  timezone: user.timezone || "",
   role: user.role,
   currentLevel: user.currentLevel,
   exp: user.exp ?? 0,
@@ -64,6 +70,145 @@ const serializeUser = (user) => ({
   createdAt: toIsoDate(user.createdAt),
   updatedAt: toIsoDate(user.updatedAt),
 });
+
+const getCurrentUserProfile = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile fetched successfully",
+      data: sanitizeUser(user),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch profile",
+    });
+  }
+};
+
+const updateCurrentUserAvatar = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Avatar file is required",
+      });
+    }
+
+    const uploadResult = await uploadImageFile(req.file, {
+      folder: "users/avatars",
+      tags: ["avatar", "profile"],
+    });
+
+    user.avatarUrl = uploadResult.secureUrl || uploadResult.url || "";
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Avatar updated successfully",
+      data: sanitizeUser(user),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update avatar",
+    });
+  }
+};
+
+const updateCurrentUserProfile = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const payload = req.body || {};
+
+    if (payload.fullName !== undefined) {
+      user.fullName = String(payload.fullName).trim();
+    }
+
+    if (payload.bio !== undefined) {
+      user.bio = String(payload.bio).trim();
+    }
+
+    if (payload.nativeLanguage !== undefined) {
+      user.nativeLanguage = String(payload.nativeLanguage).trim();
+    }
+
+    if (payload.timezone !== undefined) {
+      user.timezone = String(payload.timezone).trim();
+    }
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      data: sanitizeUser(user),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update profile",
+    });
+  }
+};
+
+const deleteCurrentUserAvatar = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    user.avatarUrl = "";
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Avatar removed successfully",
+      data: sanitizeUser(user),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to delete avatar",
+    });
+  }
+};
 
 const getAdminOverview = async (_req, res) => {
   try {
@@ -323,4 +468,12 @@ const getAdminReports = async (_req, res) => {
   }
 };
 
-export { getAdminOverview, getAdminReports, getAdminUsers };
+export {
+  deleteCurrentUserAvatar,
+  getAdminOverview,
+  getAdminReports,
+  getAdminUsers,
+  getCurrentUserProfile,
+  updateCurrentUserAvatar,
+  updateCurrentUserProfile,
+};
