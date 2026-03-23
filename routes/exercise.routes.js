@@ -1,6 +1,9 @@
 import express from "express";
 
 import {
+    createAdminExercise,
+    deleteAdminExercise,
+    getAdminExercises,
     getExerciseById,
     getExerciseHints,
     getExerciseHistory,
@@ -10,12 +13,12 @@ import {
     getRecommendedExercises,
     listExercises,
     submitExerciseAttempt,
+    updateAdminExercise,
 } from "../controllers/index.js";
-import { requireAuth } from "../middleware/auth.middleware.js";
+import { requireAdmin, requireAuth } from "../middleware/auth.middleware.js";
+import { uploadExerciseCoverImage } from "../middleware/upload.middleware.js";
 
 const router = express.Router();
-
-router.use(requireAuth);
 
 /**
  * @swagger
@@ -58,7 +61,26 @@ router.use(requireAuth);
  *       200:
  *         description: Exercises fetched successfully
  */
-router.get("/", listExercises);
+router.get("/admin/exercises", requireAuth, requireAdmin, getAdminExercises);
+router.post(
+    "/admin/exercises",
+    requireAuth,
+    requireAdmin,
+    uploadExerciseCoverImage,
+    createAdminExercise
+);
+router.put(
+    "/admin/exercises/:id",
+    requireAuth,
+    requireAdmin,
+    uploadExerciseCoverImage,
+    updateAdminExercise
+);
+router.delete("/admin/exercises/:id", requireAuth, requireAdmin, deleteAdminExercise);
+
+router.use("/exercises", requireAuth);
+
+router.get("/exercises", listExercises);
 
 /**
  * @swagger
@@ -72,7 +94,7 @@ router.get("/", listExercises);
  *       200:
  *         description: Exercise summary fetched successfully
  */
-router.get("/summary", getExerciseSummary);
+router.get("/exercises/summary", getExerciseSummary);
 
 /**
  * @swagger
@@ -91,7 +113,7 @@ router.get("/summary", getExerciseSummary);
  *       200:
  *         description: Recommended exercises fetched successfully
  */
-router.get("/recommended", getRecommendedExercises);
+router.get("/exercises/recommended", getRecommendedExercises);
 
 /**
  * @swagger
@@ -110,7 +132,7 @@ router.get("/recommended", getRecommendedExercises);
  *       200:
  *         description: Exercise history fetched successfully
  */
-router.get("/history", getExerciseHistory);
+router.get("/exercises/history", getExerciseHistory);
 
 /**
  * @swagger
@@ -132,7 +154,7 @@ router.get("/history", getExerciseHistory);
  *       404:
  *         description: Exercise not found
  */
-router.get("/:id", getExerciseById);
+router.get("/exercises/:id", getExerciseById);
 
 /**
  * @swagger
@@ -152,7 +174,7 @@ router.get("/:id", getExerciseById);
  *       200:
  *         description: Exercise hints fetched successfully
  */
-router.get("/:id/hints", getExerciseHints);
+router.get("/exercises/:id/hints", getExerciseHints);
 
 /**
  * @swagger
@@ -172,7 +194,7 @@ router.get("/:id/hints", getExerciseHints);
  *       200:
  *         description: Leaderboard fetched successfully
  */
-router.get("/:id/leaderboard", getExerciseLeaderboard);
+router.get("/exercises/:id/leaderboard", getExerciseLeaderboard);
 
 /**
  * @swagger
@@ -197,7 +219,7 @@ router.get("/:id/leaderboard", getExerciseLeaderboard);
  *       200:
  *         description: Exercise review generated successfully
  */
-router.get("/:id/review", getExerciseReview);
+router.get("/exercises/:id/review", getExerciseReview);
 
 /**
  * @swagger
@@ -232,6 +254,6 @@ router.get("/:id/review", getExerciseReview);
  *       201:
  *         description: Exercise submitted successfully
  */
-router.post("/:id/submit", submitExerciseAttempt);
+router.post("/exercises/:id/submit", submitExerciseAttempt);
 
 export default router;

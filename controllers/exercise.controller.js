@@ -5,6 +5,7 @@ import {
     DEFAULT_COVER_IMAGES,
     GENERIC_HINTS,
 } from "../helper/exercise.seed.js";
+import { uploadImageFile } from "../helper/upload.helper.js";
 
 const toSafeInt = (value, fallback = 0) => {
     const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -58,6 +59,112 @@ const normalizeExercise = (exercise, index = 0) => {
         skills: Array.isArray(exercise?.skills) ? exercise.skills : [topic, exercise?.type || "practice"],
         questions,
     };
+};
+
+const parseStringArray = (value) => {
+    if (Array.isArray(value)) {
+        return value.map((item) => String(item).trim()).filter(Boolean);
+    }
+
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+
+        if (!trimmed) {
+            return [];
+        }
+
+        if (trimmed.startsWith("[")) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                return Array.isArray(parsed)
+                    ? parsed.map((item) => String(item).trim()).filter(Boolean)
+                    : [];
+            } catch {
+                return [];
+            }
+        }
+
+        return trimmed
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+    }
+
+    return [];
+};
+
+const parseStructuredArray = (value, fieldName) => {
+    if (Array.isArray(value)) {
+        return value;
+    }
+
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+
+        if (!trimmed) {
+            return [];
+        }
+
+        try {
+            const parsed = JSON.parse(trimmed);
+
+            if (Array.isArray(parsed)) {
+                return parsed;
+            }
+        } catch {
+            throw new Error(`${fieldName} must be a valid JSON array`);
+        }
+    }
+
+    if (value === undefined || value === null || value === "") {
+        return [];
+    }
+
+    throw new Error(`${fieldName} must be an array`);
+};
+
+const toIsoDate = (value) => {
+    const date = value instanceof Date ? value : new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+
+    return date.toISOString();
+};
+
+const serializeExercise = (exercise) => ({
+    id: String(exercise._id),
+    title: exercise.title,
+    description: exercise.description || "",
+    level: exercise.level,
+    type: exercise.type,
+    topic: exercise.topic || "general",
+    durationMinutes: exercise.durationMinutes ?? 8,
+    rewardsXp: exercise.rewardsXp ?? exercise.rewards?.exp ?? 0,
+    coverImage: exercise.coverImage || "",
+    skills: Array.isArray(exercise.skills) ? exercise.skills : [],
+    questionCount:
+        typeof exercise.questionCount === "number"
+            ? exercise.questionCount
+            : Array.isArray(exercise.questions)
+                ? exercise.questions.length
+                : 0,
+    createdAt: toIsoDate(exercise.createdAt),
+    updatedAt: toIsoDate(exercise.updatedAt),
+});
+
+const resolveCoverImage = async (req) => {
+    if (req.file) {
+        const uploadResult = await uploadImageFile(req.file, {
+            folder: "exercises",
+            tags: ["exercise"],
+        });
+
+        return uploadResult.secureUrl || uploadResult.url || "";
+    }
+
+    return String(req.body?.coverImage || "").trim();
 };
 
 const getExercises = async () => {
@@ -556,7 +663,146 @@ const getExerciseReview = async (req, res) => {
     }
 };
 
+const getAdminExercises = async (_req, res) => {
+    try {
+        const exercises = await Exercise.find({})
+            .sort({ updatedAt: -1 })
+            .lean();
+
+        return res.status(200).json({
+            success: true,
+            message: "Admin exercises fetched successfully",
+            data: {
+                items: exercises.map(serializeExercise),
+            },
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to fetch admin exercises",
+        });
+    }
+};
+
+const createAdminExercise = async (req, res) => {
+    try {
+        const {
+            title,
+            description = "",
+            type,
+            level,
+            topic = "general",
+            durationMinutes = 8,
+            rewardsXp = 0,
+            skills = [],
+            questions = [],
+        } = req.body;
+
+        if (!title || !type || !level) {
+            return res.status(400).json({
+                success: false,
+                message: "title, type, and level are required",
+            });
+        }
+
+        const coverImage = await resolveCoverImage(req);
+
+        const exercise = await Exercise.create({
+            title: String(title).trim(),
+            description: String(description).trim(),
+            type,
+            level,
+            topic: String(topic).trim() || "general",
+            coverImage,
+            skills: parseStringArray(skills),
+            durationMinutes: Number(durationMinutes) || 8,
+            rewardsXp: Number(rewardsXp) || 0,
+            questions: parseStructuredArray(questions, "questions"),
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Exercise created successfully",
+            data: serializeExercise(exercise.toObject()),
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to create exercise",
+        });
+    }
+};
+
+const updateAdminExercise = async (req, res) => {
+    try {
+        const exercise = await Exercise.findById(req.params.id);
+
+        if (!exercise) {
+            return res.status(404).json({
+                success: false,
+                message: "Exercise not found",
+            });
+        }
+
+        const payload = req.body || {};
+
+        if (payload.title !== undefined) exercise.title = String(payload.title).trim();
+        if (payload.description !== undefined) exercise.description = String(payload.description).trim();
+        if (payload.type !== undefined) exercise.type = payload.type;
+        if (payload.level !== undefined) exercise.level = payload.level;
+        if (payload.topic !== undefined) exercise.topic = String(payload.topic).trim() || "general";
+        if (payload.coverImage !== undefined || req.file) {
+            exercise.coverImage = await resolveCoverImage(req);
+        }
+        if (payload.skills !== undefined) exercise.skills = parseStringArray(payload.skills);
+        if (payload.durationMinutes !== undefined) exercise.durationMinutes = Number(payload.durationMinutes) || 8;
+        if (payload.rewardsXp !== undefined) exercise.rewardsXp = Number(payload.rewardsXp) || 0;
+        if (payload.questions !== undefined) {
+            exercise.questions = parseStructuredArray(payload.questions, "questions");
+        }
+
+        await exercise.save();
+
+        return res.status(200).json({
+            success: true,
+            message: "Exercise updated successfully",
+            data: serializeExercise(exercise.toObject()),
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to update exercise",
+        });
+    }
+};
+
+const deleteAdminExercise = async (req, res) => {
+    try {
+        const exercise = await Exercise.findByIdAndDelete(req.params.id);
+
+        if (!exercise) {
+            return res.status(404).json({
+                success: false,
+                message: "Exercise not found",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Exercise deleted successfully",
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to delete exercise",
+        });
+    }
+};
+
 export {
+    createAdminExercise,
+    deleteAdminExercise,
+    getAdminExercises,
     getExerciseById,
     getExerciseHints,
     getExerciseHistory,
@@ -566,4 +812,5 @@ export {
     getRecommendedExercises,
     listExercises,
     submitExerciseAttempt,
+    updateAdminExercise,
 };

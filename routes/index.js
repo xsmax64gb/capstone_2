@@ -1,8 +1,10 @@
 import express from "express";
 
-import adminRouter from "./admin.routes.js";
+import aiRouter from "./ai.routes.js";
 import authRouter from "./auth.routes.js";
 import exerciseRouter from "./exercise.routes.js";
+import userRouter from "./user.routes.js";
+import vocabularyRouter from "./vocabulary.routes.js";
 import { healthCheck } from "../controllers/index.js";
 
 const router = express.Router();
@@ -28,8 +30,10 @@ const router = express.Router();
  *                       format: date-time
  */
 router.get("/health", healthCheck);
-router.use("/admin", adminRouter);
+router.use("/", aiRouter);
 router.use("/auth", authRouter);
-router.use("/exercises", exerciseRouter);
+router.use("/", exerciseRouter);
+router.use("/", userRouter);
+router.use("/", vocabularyRouter);
 
 export default router;

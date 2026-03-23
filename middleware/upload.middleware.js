@@ -20,5 +20,12 @@ const uploadMulter = multer({
 });
 
 const uploadSingleImage = uploadMulter.single("image");
+const uploadExerciseCoverImage = uploadMulter.single("coverImageFile");
+const uploadVocabularyImage = uploadMulter.single("imageFile");
 
-export { uploadMulter, uploadSingleImage };
+export {
+  uploadExerciseCoverImage,
+  uploadMulter,
+  uploadSingleImage,
+  uploadVocabularyImage,
+};

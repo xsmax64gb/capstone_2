@@ -7,22 +7,15 @@ import {
 } from "./auth.controller.js";
 import {
   createAdminAiLevel,
-  createAdminExercise,
-  createAdminVocabulary,
   deleteAdminAiLevel,
-  deleteAdminExercise,
-  deleteAdminVocabulary,
   getAdminAiLevels,
-  getAdminExercises,
-  getAdminOverview,
-  getAdminReports,
-  getAdminUsers,
-  getAdminVocabulary,
   updateAdminAiLevel,
-  updateAdminExercise,
-  updateAdminVocabulary,
-} from "./admin.controller.js";
+  uploadAdminImage,
+} from "./ai.controller.js";
 import {
+  createAdminExercise,
+  deleteAdminExercise,
+  getAdminExercises,
   getExerciseById,
   getExerciseHints,
   getExerciseHistory,
@@ -32,7 +25,19 @@ import {
   getRecommendedExercises,
   listExercises,
   submitExerciseAttempt,
+  updateAdminExercise,
 } from "./exercise.controller.js";
+import {
+  getAdminOverview,
+  getAdminReports,
+  getAdminUsers,
+} from "./user.controller.js";
+import {
+  createAdminVocabulary,
+  deleteAdminVocabulary,
+  getAdminVocabulary,
+  updateAdminVocabulary,
+} from "./vocabulary.controller.js";
 
 const healthCheck = (_req, res) => {
   res.status(200).json({
@@ -73,4 +78,5 @@ export {
   updateAdminAiLevel,
   updateAdminExercise,
   updateAdminVocabulary,
+  uploadAdminImage,
 };
