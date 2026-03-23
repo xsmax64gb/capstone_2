@@ -1,5 +1,6 @@
 import User from "./user.model.js";
 import PlacementTest from "./placement-test.model.js";
+import VocabularySet from "./vocabulary-set.model.js";
 import Vocabulary from "./vocabulary.model.js";
 import Exercise from "./exercise.model.js";
 import ExerciseAttempt from "./exercise-attempt.model.js";
@@ -12,6 +13,7 @@ import Otp from "./otp.model.js";
 export {
   User,
   PlacementTest,
+  VocabularySet,
   Vocabulary,
   Exercise,
   ExerciseAttempt,

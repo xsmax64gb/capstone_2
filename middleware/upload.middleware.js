@@ -21,13 +21,13 @@ const uploadMulter = multer({
 
 const uploadSingleImage = uploadMulter.single("image");
 const uploadExerciseCoverImage = uploadMulter.single("coverImageFile");
-const uploadVocabularyImage = uploadMulter.single("imageFile");
+const uploadVocabularyCoverImage = uploadMulter.single("coverImageFile");
 const uploadAvatarImage = uploadMulter.single("avatarFile");
 
 export {
   uploadAvatarImage,
   uploadExerciseCoverImage,
+  uploadVocabularyCoverImage,
   uploadMulter,
   uploadSingleImage,
-  uploadVocabularyImage,
 };

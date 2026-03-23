@@ -1,45 +1,30 @@
 import mongoose from "mongoose";
 
-import { LEVELS } from "./constants.js";
-
 const vocabularySchema = new mongoose.Schema(
   {
+    setId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "VocabularySet",
+      required: true,
+      index: true,
+    },
     word: {
       type: String,
       required: true,
       trim: true,
+    },
+    wordLower: {
+      type: String,
+      required: true,
+      trim: true,
+      lowercase: true,
     },
     meaning: {
       type: String,
       required: true,
       trim: true,
     },
-    phonetic: {
-      type: String,
-      trim: true,
-      default: "",
-    },
     example: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-    level: {
-      type: String,
-      enum: LEVELS,
-      required: true,
-    },
-    topic: {
-      type: String,
-      trim: true,
-      default: "general",
-    },
-    imageUrl: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-    audioUrl: {
       type: String,
       trim: true,
       default: "",
@@ -51,7 +36,14 @@ const vocabularySchema = new mongoose.Schema(
   }
 );
 
-vocabularySchema.index({ level: 1, topic: 1 });
-vocabularySchema.index({ word: 1, level: 1 });
+vocabularySchema.pre("validate", function normalizeWord(next) {
+  this.wordLower = String(this.word || "")
+    .trim()
+    .toLowerCase();
+  next();
+});
+
+vocabularySchema.index({ setId: 1, wordLower: 1 }, { unique: true });
+vocabularySchema.index({ word: "text", meaning: "text", example: "text" });
 
 export default mongoose.models.Vocabulary || mongoose.model("Vocabulary", vocabularySchema);
