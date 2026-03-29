@@ -9,9 +9,18 @@ import {
   getAdminVocabulary,
   getAdminVocabularyById,
   getAdminVocabularyWords,
+  getRecommendedVocabularies,
+  getVocabularyById,
+  getVocabularyHints,
+  getVocabularyHistory,
+  getVocabularyLeaderboard,
+  getVocabularyReview,
+  getVocabularySummary,
+  listVocabularies,
+  submitVocabularyAttempt,
   updateAdminVocabulary,
   updateAdminVocabularyWord,
-} from "../controllers/vocabulary.controller.js";
+} from "../controllers/index.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.middleware.js";
 import {
   uploadVocabularyCoverImage,
@@ -66,5 +75,27 @@ router.delete(
   requireAdmin,
   deleteAdminVocabularyWord
 );
+
+// ─── User-facing vocabulary routes ─────────────────────────────────────────────
+
+router.use("/vocabularies", requireAuth);
+
+router.get("/vocabularies", listVocabularies);
+
+router.get("/vocabularies/summary", getVocabularySummary);
+
+router.get("/vocabularies/recommended", getRecommendedVocabularies);
+
+router.get("/vocabularies/history", getVocabularyHistory);
+
+router.get("/vocabularies/:id", getVocabularyById);
+
+router.get("/vocabularies/:id/hints", getVocabularyHints);
+
+router.get("/vocabularies/:id/leaderboard", getVocabularyLeaderboard);
+
+router.get("/vocabularies/:id/review", getVocabularyReview);
+
+router.post("/vocabularies/:id/submit", submitVocabularyAttempt);
 
 export default router;

@@ -69,6 +69,20 @@ const userSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    targetLanguage: {
+      type: String,
+      trim: true,
+      default: "en",
+    },
+    streakDays: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    lastActiveAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     collection: "users",

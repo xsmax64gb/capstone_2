@@ -28,6 +28,10 @@ const swaggerDefinition = {
       name: "Exercises",
       description: "Exercise learning flow endpoints",
     },
+    {
+      name: "Learn",
+      description: "Map-based AI conversation learning",
+    },
   ],
   components: {
     securitySchemes: {

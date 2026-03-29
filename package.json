@@ -10,7 +10,8 @@
     "dev": "nodemon index.js",
     "start": "node index.js",
     "seed:exercises": "node scripts/seed-exercises.js",
-    "seed:exercises:force": "node scripts/seed-exercises.js --force"
+    "seed:exercises:force": "node scripts/seed-exercises.js --force",
+    "seed:learn": "node scripts/seed-learn-maps.js"
   },
   "dependencies": {
     "@sendgrid/mail": "^8.1.6",

@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 import { uploadImageFile } from "../helper/upload.helper.js";
 import { Vocabulary, VocabularySet } from "../models/index.js";
 
@@ -592,6 +594,509 @@ const deleteAdminVocabularyWord = async (req, res) => {
   }
 };
 
+// ─── User-facing endpoints ────────────────────────────────────────────────────
+
+const DEFAULT_COVER_IMAGES = {
+  "daily-life": "https://images.unsplash.com/photo-1484480974693-6ca0a78fb36b?w=800&q=80",
+  work: "https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&q=80",
+  travel: "https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800&q=80",
+  technology: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&q=80",
+  general: "https://images.unsplash.com/photo-1546410531-bb4caa6b424d?w=800&q=80",
+};
+
+const normalizeWordForUser = (word) => ({
+  id: String(word._id),
+  word: word.word,
+  phonetic: "",
+  meaning: word.meaning,
+  example: word.example || "",
+  partOfSpeech: "word",
+  synonyms: [],
+  antonyms: [],
+});
+
+const normalizeVocabularySetForUser = (set, words = []) => ({
+  id: String(set._id),
+  title: set.name,
+  description: set.description || "",
+  level: set.level,
+  topic: set.topic || "general",
+  coverImage: set.coverImageUrl || DEFAULT_COVER_IMAGES[set.topic] || DEFAULT_COVER_IMAGES.general,
+  wordCount: words.length,
+  durationMinutes: Math.max(5, Math.round(words.length * 0.8)),
+  rewardsXp: Math.round(words.length * 2),
+  words: words.map(normalizeWordForUser),
+});
+
+const generateFlashcards = (words) => {
+  return words.map((word) => [
+    { id: `${word._id}-fc-1`, front: word.word, back: word.meaning },
+    { id: `${word._id}-fc-2`, front: `What does "${word.word}" mean?`, back: word.meaning },
+    ...(word.example ? [{ id: `${word._id}-fc-3`, front: word.example, back: word.word }] : []),
+  ]).flat();
+};
+
+const generateQuizQuestions = (words) => {
+  if (words.length < 2) return [];
+  return words.slice(0, 10).map((word, index) => {
+    const otherMeanings = words
+      .filter((w) => w._id.toString() !== word._id.toString())
+      .map((w) => w.meaning)
+      .slice(0, 3);
+
+    while (otherMeanings.length < 3) {
+      otherMeanings.push("Không có trong danh sách");
+    }
+
+    const options = [word.meaning, ...otherMeanings].sort(() => Math.random() - 0.5);
+    const correctIndex = options.indexOf(word.meaning);
+
+    return {
+      id: `${word._id}-q-${index + 1}`,
+      prompt: `What does "${word.word}" mean?`,
+      options,
+      correctIndex: correctIndex >= 0 ? correctIndex : 0,
+      explanation: `The word "${word.word}" means "${word.meaning}".${word.example ? ` Example: ${word.example}` : ""}`,
+    };
+  });
+};
+
+const listVocabularies = async (req, res) => {
+  try {
+    const {
+      query: rawQuery,
+      level,
+      topic,
+      page = "1",
+      limit = "20",
+    } = req.query || {};
+
+    const q = typeof rawQuery === "string" ? rawQuery.trim().toLowerCase() : "";
+    const skip = (Math.max(1, parseInt(page, 10)) - 1) * Math.max(1, parseInt(limit, 10));
+    const take = Math.max(1, Math.min(100, parseInt(limit, 10)));
+
+    const filter = { isActive: true };
+    if (level) filter.level = String(level);
+    if (topic) filter.topic = String(topic);
+
+    const total = await VocabularySet.countDocuments(filter);
+    const sets = await VocabularySet.find(filter)
+      .sort({ sortOrder: 1, updatedAt: -1 })
+      .skip(skip)
+      .limit(take)
+      .lean();
+
+    const wordsMap = await getWordsMapBySetIds(sets.map((s) => s._id));
+
+    const items = sets.map((set) => {
+      const words = wordsMap.get(String(set._id)) || [];
+      const normalized = normalizeVocabularySetForUser(set, words);
+      if (q) {
+        const matchWord = words.some(
+          (w) =>
+            w.word.toLowerCase().includes(q) ||
+            w.meaning.toLowerCase().includes(q) ||
+            (w.example || "").toLowerCase().includes(q)
+        );
+        if (!matchWord && !set.name.toLowerCase().includes(q)) return null;
+      }
+      return normalized;
+    }).filter(Boolean);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        items,
+        pagination: {
+          page: parseInt(page, 10),
+          limit: take,
+          total,
+          totalPages: Math.ceil(total / take),
+        },
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to list vocabularies",
+    });
+  }
+};
+
+const getVocabularySummary = async (_req, res) => {
+  try {
+    const { VocabularySet: VS, Vocabulary: V, VocabularyAttempt: VA } = mongoose.models;
+
+    const totalSets = await VS.countDocuments({ isActive: true });
+    const totalWords = await V.countDocuments();
+
+    const sets = await VS.find({ isActive: true }).select("_id").lean();
+    const setIds = sets.map((s) => s._id);
+
+    const masteredCount = setIds.length;
+    const learningCount = Math.max(0, totalWords - masteredCount);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        totalSets,
+        totalWords,
+        masteredCount,
+        learningCount,
+        newCount: 0,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get vocabulary summary",
+    });
+  }
+};
+
+const getRecommendedVocabularies = async (req, res) => {
+  try {
+    const sets = await VocabularySet.find({ isActive: true })
+      .sort({ sortOrder: 1, updatedAt: -1 })
+      .limit(6)
+      .lean();
+
+    const wordsMap = await getWordsMapBySetIds(sets.map((s) => s._id));
+    const items = sets.map((set) =>
+      normalizeVocabularySetForUser(set, wordsMap.get(String(set._id)) || [])
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: items,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get recommended vocabularies",
+    });
+  }
+};
+
+const getVocabularyById = async (req, res) => {
+  try {
+    const set = await VocabularySet.findById(req.params.id).lean();
+
+    if (!set || !set.isActive) {
+      return res.status(404).json({
+        success: false,
+        message: "Vocabulary set not found",
+      });
+    }
+
+    const words = await Vocabulary.find({ setId: set._id }).lean();
+
+    const relatedSets = await VocabularySet.find({
+      isActive: true,
+      _id: { $ne: set._id },
+      topic: set.topic,
+    })
+      .limit(3)
+      .lean();
+
+    const relatedWordsMap = await getWordsMapBySetIds(relatedSets.map((s) => s._id));
+    const related = relatedSets.map((s) =>
+      normalizeVocabularySetForUser(s, relatedWordsMap.get(String(s._id)) || [])
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        vocabulary: normalizeVocabularySetForUser(set, words),
+        related,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get vocabulary",
+    });
+  }
+};
+
+const getVocabularyHints = async (req, res) => {
+  try {
+    const set = await VocabularySet.findById(req.params.id).lean();
+
+    if (!set) {
+      return res.status(404).json({
+        success: false,
+        message: "Vocabulary set not found",
+      });
+    }
+
+    const personalized = [
+      `Focus on the "${set.topic}" topic words — they're used frequently in real contexts.`,
+      `Try flashcards first for active recall, then switch to quiz mode.`,
+      `Review 5 words at a time, then test yourself before adding more.`,
+      `Use the example sentences to understand how each word is used naturally.`,
+    ];
+
+    const strategies = [
+      "Read each word aloud 3 times to reinforce memory.",
+      "Write your own sentence using each new word.",
+      "Group words by topic to create mental connections.",
+      "Test yourself after 10 minutes, then again after 1 day.",
+    ];
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        vocabularyId: String(set._id),
+        title: set.name,
+        personalized,
+        strategies,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get hints",
+    });
+  }
+};
+
+const getVocabularyLeaderboard = async (req, res) => {
+  try {
+    const { VocabularyAttempt: VA } = mongoose.models;
+
+    const topAttempts = await VA.aggregate([
+      { $match: { setId: new mongoose.Types.ObjectId(req.params.id) } },
+      { $sort: { score: -1, durationSec: 1 } },
+      { $limit: 20 },
+      {
+        $project: {
+          _id: 0,
+          userId: 1,
+          userName: 1,
+          score: 1,
+          durationSec: 1,
+        },
+      },
+    ]);
+
+    const leaderboard = topAttempts.map((item, index) => ({
+      rank: index + 1,
+      name: item.userName || "Anonymous",
+      score: item.score,
+      durationSec: item.durationSec || 0,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        vocabularyId: req.params.id,
+        wordCount: 0,
+        leaderboard,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get leaderboard",
+    });
+  }
+};
+
+const getVocabularyHistory = async (req, res) => {
+  try {
+    const { VocabularyAttempt: VA } = mongoose.models;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const limit = Math.max(1, Math.min(50, parseInt(req.query?.limit || "20", 10)));
+
+    const attempts = await VA.find({ userId: new mongoose.Types.ObjectId(userId) })
+      .sort({ submittedAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const history = await Promise.all(
+      attempts.map(async (attempt) => {
+        const set = await VocabularySet.findById(attempt.setId).lean();
+        return {
+          attemptId: String(attempt._id),
+          setId: String(attempt.setId),
+          setName: set?.name || "Unknown Set",
+          submittedAt: toIsoDate(attempt.submittedAt),
+          score: attempt.score,
+          total: attempt.total,
+          durationSec: attempt.durationSec || 0,
+          mode: attempt.mode,
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: history,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get vocabulary history",
+    });
+  }
+};
+
+const submitVocabularyAttempt = async (req, res) => {
+  try {
+    const { VocabularyAttempt: VA, VocabularySet: VS } = mongoose.models;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const { mode, answers = [], durationSec = 0, wordIds = [] } = req.body || {};
+
+    if (!["flashcards", "quiz"].includes(mode)) {
+      return res.status(400).json({
+        success: false,
+        message: "mode must be flashcards or quiz",
+      });
+    }
+
+    const set = await VS.findById(req.params.id).lean();
+    if (!set) {
+      return res.status(404).json({
+        success: false,
+        message: "Vocabulary set not found",
+      });
+    }
+
+    const words = await Vocabulary.find({ setId: set._id }).lean();
+    const total = words.length;
+    let score = 0;
+
+    if (mode === "flashcards") {
+      score = answers.filter((a) => a && a.correct).length;
+    } else {
+      score = answers.filter((a, i) => {
+        const wordId = wordIds[i];
+        const word = words.find((w) => String(w._id) === String(wordId));
+        if (!word) return false;
+        const correctIndex = wordIds[i];
+        return a === correctIndex;
+      }).length;
+    }
+
+    const percent = total > 0 ? Math.round((score / total) * 100) : 0;
+    const earnedXp = Math.round(score * 2);
+    const resultLabel =
+      percent >= 90 ? "Excellent!" :
+      percent >= 70 ? "Good job!" :
+      percent >= 50 ? "Keep going!" :
+      "Needs more practice";
+
+    const attempt = await VA.create({
+      setId: set._id,
+      userId: new mongoose.Types.ObjectId(userId),
+      userName: req.user?.name || "",
+      mode,
+      answers: answers.map((a, i) => ({
+        wordId: wordIds[i] || null,
+        selectedIndex: a ?? null,
+        correct: false,
+      })),
+      score,
+      total,
+      percent,
+      durationSec: Math.max(0, parseInt(durationSec, 10) || 0),
+      earnedXp,
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        attemptId: String(attempt._id),
+        score,
+        total,
+        percent,
+        time: attempt.durationSec,
+        earnedXp,
+        resultLabel,
+        answers,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to submit vocabulary attempt",
+    });
+  }
+};
+
+const getVocabularyReview = async (req, res) => {
+  try {
+    const { VocabularyAttempt: VA } = mongoose.models;
+    const { answers: rawAnswers } = req.query || {};
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const set = await VocabularySet.findById(req.params.id).lean();
+    if (!set) {
+      return res.status(404).json({
+        success: false,
+        message: "Vocabulary set not found",
+      });
+    }
+
+    const words = await Vocabulary.find({ setId: set._id }).lean();
+
+    let userAnswers = [];
+    if (typeof rawAnswers === "string" && rawAnswers) {
+      try {
+        userAnswers = JSON.parse(rawAnswers);
+      } catch {
+        userAnswers = [];
+      }
+    }
+
+    const review = words.map((word, index) => {
+      const selectedIndex = userAnswers[index] ?? -1;
+      const correctIndex = 0;
+      const options = [word.meaning, ...words.filter((w) => w._id.toString() !== word._id.toString()).map((w) => w.meaning).slice(0, 3)];
+      while (options.length < 4) options.push("Không có trong danh sách");
+      options.length = 4;
+
+      return {
+        wordId: String(word._id),
+        word: word.word,
+        prompt: `What does "${word.word}" mean?`,
+        options,
+        selectedIndex,
+        selectedText: selectedIndex >= 0 && selectedIndex < options.length ? options[selectedIndex] : null,
+        correctIndex,
+        correctText: options[correctIndex] || word.meaning,
+        isCorrect: selectedIndex === correctIndex,
+        explanation: word.example ? `Example: ${word.example}` : "",
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        vocabularyId: String(set._id),
+        review,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get vocabulary review",
+    });
+  }
+};
+
 export {
   createAdminVocabulary,
   createAdminVocabularyWord,
@@ -603,4 +1108,14 @@ export {
   getAdminVocabularyWords,
   updateAdminVocabulary,
   updateAdminVocabularyWord,
+  // user-facing
+  listVocabularies,
+  getVocabularySummary,
+  getRecommendedVocabularies,
+  getVocabularyById,
+  getVocabularyHints,
+  getVocabularyLeaderboard,
+  getVocabularyHistory,
+  submitVocabularyAttempt,
+  getVocabularyReview,
 };
