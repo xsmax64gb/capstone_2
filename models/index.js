@@ -1,4 +1,5 @@
 import User from "./user.model.js";
+import PlacementAttempt from "./placement-attempt.model.js";
 import PlacementTest from "./placement-test.model.js";
 import VocabularySet from "./vocabulary-set.model.js";
 import Vocabulary from "./vocabulary.model.js";
@@ -21,6 +22,7 @@ import UserLearnAchievement from "./user-learn-achievement.model.js";
 
 export {
   User,
+  PlacementAttempt,
   PlacementTest,
   VocabularySet,
   Vocabulary,

@@ -6,6 +6,7 @@ import exerciseRouter from "./exercise.routes.js";
 import userRouter from "./user.routes.js";
 import vocabularyRouter from "./vocabulary.routes.js";
 import learnRouter from "./learn.routes.js";
+import placementRouter from "./placement.routes.js";
 import { healthCheck } from "../controllers/index.js";
 
 const router = express.Router();
@@ -37,5 +38,6 @@ router.use("/", exerciseRouter);
 router.use("/", userRouter);
 router.use("/", vocabularyRouter);
 router.use("/", learnRouter);
+router.use("/", placementRouter);
 
 export default router;
