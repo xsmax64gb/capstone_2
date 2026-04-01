@@ -125,11 +125,11 @@ export async function generateLearnStepDraft({ map, existingSteps = [], input })
   const existingStepsContext =
     existingSteps.length > 0
       ? existingSteps
-          .map(
-            (step, index) =>
-              `${index + 1}. [${step.type}] order=${step.order} title=${step.title} scenario=${step.scenarioTitle || "-"}`
-          )
-          .join("\n")
+        .map(
+          (step, index) =>
+            `${index + 1}. [${step.type}] order=${step.order} title=${step.title} scenario=${step.scenarioTitle || "-"}`
+        )
+        .join("\n")
       : "No existing steps yet.";
 
   const systemPrompt = `You generate admin-ready speaking step drafts for an English learning app.
@@ -215,12 +215,12 @@ export async function runLearnQuickReply({
 
   const compactHistory = Array.isArray(history)
     ? history
-        .slice(-3)
-        .map((m) => ({
-          role: m.role === "ai" ? "assistant" : "user",
-          content: String(m.content || "").trim(),
-        }))
-        .filter((m) => m.content)
+      .slice(-3)
+      .map((m) => ({
+        role: m.role === "ai" ? "assistant" : "user",
+        content: String(m.content || "").trim(),
+      }))
+      .filter((m) => m.content)
     : [];
 
   const scenarioHints = [
@@ -358,8 +358,8 @@ Keep suggestion concise (max 1 short sentence). TASKS_CONTEXT may be empty. Only
   const tasksContext =
     bossTasks.length > 0
       ? `TASKS_CONTEXT (id: description): ${JSON.stringify(
-          bossTasks.map((t) => ({ id: t.id, description: t.description }))
-        )}`
+        bossTasks.map((t) => ({ id: t.id, description: t.description }))
+      )}`
       : "TASKS_CONTEXT: []";
 
   const messages = [

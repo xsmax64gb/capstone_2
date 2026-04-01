@@ -89,16 +89,16 @@ const serializeMap = (m) => ({
 const serializeProgress = (p) =>
   p
     ? {
-        status: p.status,
-        currentStepId: p.currentStepId ? String(p.currentStepId) : null,
-        totalXPEarned: p.totalXPEarned,
-        stepsCompleted: p.stepsCompleted,
-        bossDefeated: p.bossDefeated,
-        bossAttempts: p.bossAttempts,
-        stars: p.stars,
-        unlockedAt: p.unlockedAt,
-        completedAt: p.completedAt,
-      }
+      status: p.status,
+      currentStepId: p.currentStepId ? String(p.currentStepId) : null,
+      totalXPEarned: p.totalXPEarned,
+      stepsCompleted: p.stepsCompleted,
+      bossDefeated: p.bossDefeated,
+      bossAttempts: p.bossAttempts,
+      stars: p.stars,
+      unlockedAt: p.unlockedAt,
+      completedAt: p.completedAt,
+    }
     : null;
 
 const serializeLearnMessage = (message) => ({
@@ -114,14 +114,14 @@ const serializeLearnMessage = (message) => ({
 const serializeBossBattle = (battle) =>
   battle
     ? {
-        id: toId(battle),
-        bossHPCurrent: battle.bossHPCurrent,
-        playerHPCurrent: battle.playerHPCurrent,
-        tasks: battle.tasks,
-        tasksCompleted: battle.tasksCompleted,
-        tasksRequired: battle.tasksRequired,
-        result: battle.result,
-      }
+      id: toId(battle),
+      bossHPCurrent: battle.bossHPCurrent,
+      playerHPCurrent: battle.playerHPCurrent,
+      tasks: battle.tasks,
+      tasksCompleted: battle.tasksCompleted,
+      tasksRequired: battle.tasksRequired,
+      result: battle.result,
+    }
     : null;
 
 const normalizeString = (value) => String(value || "").trim();
@@ -271,10 +271,10 @@ const normalizeGeneratedLearnStepDraft = (payload = {}, input, fallbackOrder = 0
     payload.minimumPassScore === null || payload.minimumPassScore === ""
       ? null
       : normalizePositiveInt(
-          payload.minimumPassScore,
-          getStepMinimumPassScore({ gradingDifficulty }),
-          1
-        );
+        payload.minimumPassScore,
+        getStepMinimumPassScore({ gradingDifficulty }),
+        1
+      );
 
   return {
     title:
@@ -398,16 +398,16 @@ export const postStartLearnConversation = async (req, res) => {
         })),
         bossBattle: result.bossBattle
           ? {
-              id: toId(result.bossBattle),
-              bossName: result.bossBattle.bossName,
-              bossHPMax: result.bossBattle.bossHPMax,
-              bossHPCurrent: result.bossBattle.bossHPCurrent,
-              playerHPMax: result.bossBattle.playerHPMax,
-              playerHPCurrent: result.bossBattle.playerHPCurrent,
-              tasks: result.bossBattle.tasks,
-              tasksCompleted: result.bossBattle.tasksCompleted,
-              tasksRequired: result.bossBattle.tasksRequired,
-            }
+            id: toId(result.bossBattle),
+            bossName: result.bossBattle.bossName,
+            bossHPMax: result.bossBattle.bossHPMax,
+            bossHPCurrent: result.bossBattle.bossHPCurrent,
+            playerHPMax: result.bossBattle.playerHPMax,
+            playerHPCurrent: result.bossBattle.playerHPCurrent,
+            tasks: result.bossBattle.tasks,
+            tasksCompleted: result.bossBattle.tasksCompleted,
+            tasksRequired: result.bossBattle.tasksRequired,
+          }
           : null,
       },
     });
@@ -588,12 +588,12 @@ export const getMyLearnAchievements = async (req, res) => {
       earnedAt: r.earnedAt,
       achievement: r.achievementId
         ? {
-            key: r.achievementId.key,
-            title: r.achievementId.title,
-            description: r.achievementId.description,
-            iconUrl: r.achievementId.iconUrl,
-            xpReward: r.achievementId.xpReward,
-          }
+          key: r.achievementId.key,
+          title: r.achievementId.title,
+          description: r.achievementId.description,
+          iconUrl: r.achievementId.iconUrl,
+          xpReward: r.achievementId.xpReward,
+        }
         : null,
     }));
     return res.json({ success: true, data: { items } });

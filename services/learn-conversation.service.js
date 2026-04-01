@@ -216,8 +216,8 @@ export async function startConversation(userId, stepId) {
   if (progress.status !== "completed") {
     const currentIndexRaw = progress.currentStepId
       ? steps.findIndex(
-          (item) => String(item._id) === String(progress.currentStepId)
-        )
+        (item) => String(item._id) === String(progress.currentStepId)
+      )
       : 0;
     const currentIndex = currentIndexRaw >= 0 ? currentIndexRaw : 0;
 
@@ -592,8 +592,8 @@ export async function endConversation(userId, conversationId) {
       ? steps.length
       : progress.currentStepId
         ? steps.findIndex(
-            (item) => String(item._id) === String(progress.currentStepId)
-          )
+          (item) => String(item._id) === String(progress.currentStepId)
+        )
         : 0;
   const safeCurrentProgressIndex =
     currentProgressIndex >= 0 ? currentProgressIndex : 0;
