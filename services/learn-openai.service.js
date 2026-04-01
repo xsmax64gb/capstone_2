@@ -9,20 +9,59 @@ import { postOpenAiChatCompletion } from "../helper/openai.helper.js";
 const getApiKey = () => process.env.OPENAI_API_KEY || "";
 
 const getModel = () => process.env.LEARN_OPENAI_MODEL || "gpt-4o-mini";
-
+const getEvaluationModel = () =>
+  process.env.LEARN_EVALUATION_OPENAI_MODEL || "gpt-4o-mini";
 const QUICK_REPLY_MAX_CHARS = 180;
+const DEFAULT_QUICK_REPLY_TIMEOUT_MS = 30000;
 
 const getQuickReplyTimeoutMs = () => {
-  const raw = Number(process.env.LEARN_QUICK_REPLY_TIMEOUT_MS || 900);
-  if (!Number.isFinite(raw) || raw <= 0) return 900;
+  const raw = Number(
+    process.env.LEARN_QUICK_REPLY_TIMEOUT_MS || DEFAULT_QUICK_REPLY_TIMEOUT_MS
+  );
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_QUICK_REPLY_TIMEOUT_MS;
+  }
   return Math.floor(raw);
 };
+
+function getModelConfig(model = getModel()) {
+  // gpt-5-mini only supports temperature=1 (default)
+  if (model.includes("gpt-5") || model === "gpt-5-mini") {
+    return { supportsTemperature: false };
+  }
+  return { supportsTemperature: true };
+}
 
 function clampReply(text, maxChars = QUICK_REPLY_MAX_CHARS) {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
   if (!normalized) return "";
   if (normalized.length <= maxChars) return normalized;
   return `${normalized.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+function buildChatCompletionBody({
+  model = getModel(),
+  messages,
+  responseFormat = null,
+  temperature,
+}) {
+  const body = {
+    model,
+    messages,
+  };
+
+  if (responseFormat) {
+    body.response_format = responseFormat;
+  }
+
+  if (
+    getModelConfig(model).supportsTemperature &&
+    Number.isFinite(temperature)
+  ) {
+    body.temperature = temperature;
+  }
+
+  return body;
 }
 
 function normalizeMessageContent(content) {
@@ -58,15 +97,14 @@ async function callOpenAiJson({
 
   const response = await postOpenAiChatCompletion({
     apiKey,
-    body: {
-      model: getModel(),
-      temperature,
-      response_format: { type: "json_object" },
+    body: buildChatCompletionBody({
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-    },
+      responseFormat: { type: "json_object" },
+      temperature,
+    }),
     errorMessagePrefix: "OpenAI generate failed",
     maxErrorLength: 300,
   });
@@ -210,7 +248,7 @@ export async function runLearnQuickReply({
 }) {
   const apiKey = getApiKey();
   if (!apiKey) {
-    return "";
+    throw new Error("OPENAI_API_KEY is required for quick reply");
   }
 
   const compactHistory = Array.isArray(history)
@@ -246,114 +284,42 @@ export async function runLearnQuickReply({
     { role: "user", content: String(userMessage || "") },
   ];
 
-  try {
-    const res = await postOpenAiChatCompletion({
-      apiKey,
-      body: {
-        model: getModel(),
-        temperature: 0.4,
-        messages,
-      },
-      errorMessagePrefix: "OpenAI quick reply error",
-      timeoutMs: getQuickReplyTimeoutMs(),
-      maxErrorLength: 180,
-    });
+  const res = await postOpenAiChatCompletion({
+    apiKey,
+    body: buildChatCompletionBody({
+      messages,
+      temperature: 0.4,
+    }),
+    errorMessagePrefix: "OpenAI quick reply error",
+    timeoutMs: getQuickReplyTimeoutMs(),
+    maxErrorLength: 180,
+  });
 
-    const data = await res.json();
-    const raw = data?.choices?.[0]?.message?.content;
-    return normalizeMessageContent(raw);
-  } catch {
-    return "";
+  const data = await res.json();
+  const raw = data?.choices?.[0]?.message?.content;
+  const reply = normalizeMessageContent(raw);
+
+  if (!reply || !String(reply).trim()) {
+    throw new Error("OpenAI quick reply returned empty content");
   }
+
+  return reply;
 }
 
 /**
  * @param {object} args
- * @param {string} args.systemPrompt - step scenario / persona
- * @param {string} [args.localeHint] - user native + target language hint
- * @param {Array<{role: string, content: string}>} args.history
  * @param {string} args.userMessage
  * @param {{ id: string, description: string }[]} [args.bossTasks]
- * @param {boolean} [args.includeReply]
- * @param {object} [args.stepContext]
- * @returns {Promise<{ reply: string, grammarErrors: Array, vocabularyUsed: string[], suggestion: string, turnQualityScore: number, tasksCompletedIds: string[] }>}
+ * @returns {Promise<{ grammarErrors: Array, suggestion: string, turnQualityScore: number, tasksCompletedIds: string[] }>}
  */
-export async function runLearnTurn({
-  systemPrompt,
-  localeHint = "",
-  history,
+export async function runLearnMessageEvaluation({
   userMessage,
   bossTasks = [],
-  includeReply = true,
-  stepContext = {},
 }) {
   const apiKey = getApiKey();
   if (!apiKey) {
-    return {
-      reply:
-        "[Demo mode — set OPENAI_API_KEY] That's great practice! Try rephrasing with a full sentence.",
-      grammarErrors: [],
-      vocabularyUsed: [],
-      suggestion: "Add OPENAI_API_KEY to enable full AI dialogue.",
-      turnQualityScore: 75,
-      tasksCompletedIds: [],
-    };
+    throw new Error("OPENAI_API_KEY is required for evaluation");
   }
-
-  const difficulty = normalizeLearnScoringDifficulty(
-    stepContext.gradingDifficulty
-  );
-  const minimumPassScore = getStepMinimumPassScore(stepContext);
-  const difficultyInstruction =
-    difficulty === "easy"
-      ? "Grade supportively. Reward clear intent and understandable English even when there are small mistakes."
-      : difficulty === "hard"
-        ? "Grade strictly. Demand strong grammar control, accurate vocabulary, clear intent completion, and natural conversation flow."
-        : "Grade in a balanced way. Reward clear communication but reduce points for repeated grammar, vocabulary, or scenario mistakes.";
-
-  const rubricSections = [
-    stepContext.scenarioTitle
-      ? `Scenario title: ${stepContext.scenarioTitle}`
-      : "",
-    stepContext.scenarioContext
-      ? `Scenario summary: ${stepContext.scenarioContext}`
-      : "",
-    stepContext.scenarioScript
-      ? `Scenario script and expected flow:\n${stepContext.scenarioScript}`
-      : "",
-    Array.isArray(stepContext.passCriteria) && stepContext.passCriteria.length
-      ? `Conversation goals: ${stepContext.passCriteria.join("; ")}`
-      : "",
-    Array.isArray(stepContext.vocabularyFocus) && stepContext.vocabularyFocus.length
-      ? `Required vocabulary focus: ${stepContext.vocabularyFocus.join("; ")}`
-      : "",
-    Array.isArray(stepContext.grammarFocus) && stepContext.grammarFocus.length
-      ? `Grammar focus: ${stepContext.grammarFocus.join("; ")}`
-      : "",
-    `Scoring difficulty: ${difficulty}. Expected passing score: ${minimumPassScore}.`,
-    difficultyInstruction,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-
-  const jsonInstruction = includeReply
-    ? `You must respond with a single JSON object only (no markdown), with keys:
-- "reply": string, your in-character response to the learner (target language, conversational)
-- "grammarErrors": array of { "message", "rule", "span" } for issues in the learner's last message (empty if none)
-- "vocabularyUsed": string array of notable words the learner used correctly
-- "suggestion": one short tip to improve (string, can be in learner's native language if needed)
-- "turnQualityScore": number 0-100 for how good the learner's utterance was, based on grammar, vocabulary, task completion, fluency, and fit with the scenario + rubric
-- "tasksCompletedIds": string array of task ids from TASKS_CONTEXT that the learner clearly completed in this turn (empty if none or not applicable)
-
-TASKS_CONTEXT may be empty. Only use ids that appear there.`
-    : `You must respond with a single JSON object only (no markdown), with keys:
-- "grammarErrors": array of { "message", "rule", "span" } for issues in the learner's last message (empty if none)
-- "vocabularyUsed": string array of notable words the learner used correctly
-- "suggestion": one short improvement tip (string)
-- "turnQualityScore": number 0-100 for utterance quality based on grammar, vocabulary, task completion, and clarity
-- "tasksCompletedIds": string array of task ids from TASKS_CONTEXT completed in this turn (empty if none)
-
-Keep suggestion concise (max 1 short sentence). TASKS_CONTEXT may be empty. Only use ids that appear there.`;
 
   const tasksContext =
     bossTasks.length > 0
@@ -365,25 +331,44 @@ Keep suggestion concise (max 1 short sentence). TASKS_CONTEXT may be empty. Only
   const messages = [
     {
       role: "system",
-      content: `${systemPrompt}\n\n${rubricSections}\n\n${localeHint}\n\n${tasksContext}\n\n${jsonInstruction}`,
+      content: `You are a fast English grammar checker for one learner sentence.
+Return a single JSON object only with keys:
+- "isCorrect": boolean
+- "grammarErrors": array of { "message": string, "rule": string, "span": string }
+- "improvedSentence": string
+- "feedback": string
+- "tasksCompletedIds": string[]
+
+Rules:
+- Check only the learner sentence itself. Do not use broader conversation context.
+- If the sentence is grammatically natural enough, set "isCorrect" to true, keep "grammarErrors" empty, set "improvedSentence" to "", and write a short praise in "feedback".
+- If the sentence has grammar problems, set "isCorrect" to false, list only the important issues, provide one natural corrected sentence in "improvedSentence", and write one short fix tip in "feedback".
+- Keep "feedback" short and direct.
+- Only include task ids from TASKS_CONTEXT when the single learner sentence clearly completes them.
+
+${tasksContext}`,
     },
-    ...history.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.content })),
-    { role: "user", content: userMessage },
+    {
+      role: "user",
+      content: String(userMessage || "").trim(),
+    },
   ];
 
   const res = await postOpenAiChatCompletion({
     apiKey,
-    body: {
-      model: getModel(),
-      temperature: 0.7,
-      response_format: { type: "json_object" },
+    body: buildChatCompletionBody({
+      model: getEvaluationModel(),
       messages,
-    },
+      responseFormat: { type: "json_object" },
+      temperature: 0.2,
+    }),
     errorMessagePrefix: "OpenAI error",
+    timeoutMs: 10000,
   });
 
   const data = await res.json();
   const raw = data?.choices?.[0]?.message?.content;
+
   if (!raw || typeof raw !== "string") {
     throw new Error("Invalid OpenAI response");
   }
@@ -395,17 +380,27 @@ Keep suggestion concise (max 1 short sentence). TASKS_CONTEXT may be empty. Only
     throw new Error("OpenAI returned non-JSON");
   }
 
+  const grammarErrors = Array.isArray(parsed.grammarErrors)
+    ? parsed.grammarErrors.map((item) => ({
+      message: String(item?.message ?? ""),
+      rule: String(item?.rule ?? ""),
+      span: String(item?.span ?? ""),
+    }))
+    : [];
+  const isCorrect = Boolean(parsed.isCorrect) || grammarErrors.length === 0;
+  const improvedSentence = String(parsed.improvedSentence ?? "").trim();
+  const feedback = String(parsed.feedback ?? "").trim();
+  const suggestion = isCorrect
+    ? feedback || "Great job. Your sentence sounds natural."
+    : improvedSentence || feedback || "Try the corrected sentence above.";
+  const turnQualityScore = isCorrect
+    ? 95
+    : Math.max(40, 90 - grammarErrors.length * 15);
+
   return {
-    reply: includeReply ? String(parsed.reply ?? "") : "",
-    grammarErrors: Array.isArray(parsed.grammarErrors) ? parsed.grammarErrors : [],
-    vocabularyUsed: Array.isArray(parsed.vocabularyUsed)
-      ? parsed.vocabularyUsed.map((s) => String(s))
-      : [],
-    suggestion: String(parsed.suggestion ?? ""),
-    turnQualityScore: Math.min(
-      100,
-      Math.max(0, Number(parsed.turnQualityScore) || 0)
-    ),
+    grammarErrors: isCorrect ? [] : grammarErrors,
+    suggestion,
+    turnQualityScore,
     tasksCompletedIds: Array.isArray(parsed.tasksCompletedIds)
       ? parsed.tasksCompletedIds.map((s) => String(s))
       : [],
@@ -438,11 +433,7 @@ export async function runSessionSummary({
 }) {
   const apiKey = getApiKey();
   if (!apiKey) {
-    return {
-      summary: "Session ended. Keep practicing!",
-      score: 70,
-      goalsAchieved: [],
-    };
+    throw new Error("OPENAI_API_KEY is required for session summary");
   }
 
   const difficulty = normalizeLearnScoringDifficulty(gradingDifficulty);
@@ -486,12 +477,11 @@ Return JSON only: { "summary": string (feedback for learner), "score": number 0-
 
   const res = await postOpenAiChatCompletion({
     apiKey,
-    body: {
-      model: getModel(),
-      temperature: 0.4,
-      response_format: { type: "json_object" },
+    body: buildChatCompletionBody({
       messages,
-    },
+      responseFormat: { type: "json_object" },
+      temperature: 0.4,
+    }),
     errorMessagePrefix: "OpenAI summary error",
   });
 

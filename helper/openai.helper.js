@@ -25,6 +25,13 @@ export async function postOpenAiChatCompletion({
   maxErrorLength = 200,
   timeoutMs = 0,
 }) {
+  console.log("[OpenAI Request]", {
+    model: body.model,
+    messagesCount: body.messages?.length,
+    hasResponseFormat: !!body.response_format,
+    hasTemperature: hasOwn(body, "temperature"),
+  });
+
   const request = async (payload) => {
     let timeoutId;
     const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
@@ -59,16 +66,21 @@ export async function postOpenAiChatCompletion({
   let response = await request(body);
 
   if (response.ok) {
+    console.log("[OpenAI Response] OK", { status: response.status });
     return response;
   }
 
   let errorText = await response.text();
+  console.log("[OpenAI Response] ERROR", { status: response.status, error: errorText?.substring(0, 200) });
 
   // Some newer models accept only the default temperature, so retry once without it.
   if (
     hasOwn(body, "temperature") &&
     isUnsupportedTemperatureError(response.status, errorText)
   ) {
+    console.warn("[OpenAI Retry] Retrying without temperature", {
+      model: body.model,
+    });
     const { temperature, ...retryBody } = body;
 
     response = await request(retryBody);

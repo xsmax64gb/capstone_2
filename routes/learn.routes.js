@@ -22,7 +22,6 @@ import {
   postEndLearnConversation,
   postLearnMessageEvaluation,
   postLearnMessageQuick,
-  postLearnMessage,
   postStartLearnConversation,
 } from "../controllers/learn.controller.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.middleware.js";
@@ -39,7 +38,6 @@ router.post(
   requireAuth,
   postLearnMessageEvaluation
 );
-router.post("/learn/conversations/:id/messages", requireAuth, postLearnMessage);
 router.post("/learn/conversations/:id/end", requireAuth, postEndLearnConversation);
 router.get("/learn/achievements/me", requireAuth, getMyLearnAchievements);
 

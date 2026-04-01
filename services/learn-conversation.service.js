@@ -9,7 +9,7 @@ import {
 } from "../models/index.js";
 import {
   runLearnQuickReply,
-  runLearnTurn,
+  runLearnMessageEvaluation,
   runSessionSummary,
 } from "./learn-openai.service.js";
 import {
@@ -30,11 +30,7 @@ import {
 const BOSS_DAMAGE_GOOD = 18;
 const BOSS_DAMAGE_OK = 8;
 const PLAYER_DAMAGE_BAD = 12;
-const LLM_HISTORY_LIMIT = 8;
 const QUICK_REPLY_HISTORY_LIMIT = 4;
-const FAST_REPLY_MAX_CHARS = 180;
-const SHORT_SUGGESTION_MAX_CHARS = 180;
-const PRAISE_SCORE_THRESHOLD = 82;
 
 function buildLocaleHint(user) {
   const native = user?.nativeLanguage || "learner's language";
@@ -49,86 +45,6 @@ function normalizeGrammarErrors(raw) {
     rule: String(e?.rule ?? e?.Rule ?? ""),
     span: String(e?.span ?? e?.Span ?? ""),
   }));
-}
-
-function clampText(value, maxChars = FAST_REPLY_MAX_CHARS) {
-  const normalized = String(value || "").replace(/\s+/g, " ").trim();
-  if (!normalized) return "";
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, maxChars - 1).trimEnd()}…`;
-}
-
-function trimLongText(value, maxChars = 1200) {
-  const normalized = String(value || "").replace(/\s+/g, " ").trim();
-  if (!normalized) return "";
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, maxChars - 1).trimEnd()}…`;
-}
-
-function toScenarioPrompt(step) {
-  const seed =
-    step?.passCriteria?.[0] ||
-    step?.vocabularyFocus?.[0] ||
-    step?.scenarioTitle ||
-    "this situation";
-
-  const normalized = clampText(seed, 56).replace(/[.!?]+$/g, "");
-  return normalized || "this situation";
-}
-
-function buildFastTeacherReply(step, learnerText) {
-  const words = String(learnerText || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  const scenarioPrompt = toScenarioPrompt(step);
-  const seed = String(learnerText || "")
-    .split("")
-    .reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const pick = (options) => options[Math.abs(seed) % options.length];
-
-  if (words.length <= 3) {
-    return pick([
-      "Nice start. Can you say that in one full sentence?",
-      "Good start. Please try one complete sentence.",
-    ]);
-  }
-
-  if (words.length <= 8) {
-    return clampText(
-      pick([
-        `Good try. Can you add one more sentence about ${scenarioPrompt}?`,
-        `Nice start. Add one short sentence about ${scenarioPrompt}.`,
-        `Great. Tell me one more detail about ${scenarioPrompt}.`,
-      ])
-    );
-  }
-
-  return clampText(
-    pick([
-      `Nice response. Can you add one more specific detail about ${scenarioPrompt}?`,
-      `Good answer. Please include one concrete detail about ${scenarioPrompt}.`,
-      `Great flow. Add one precise detail about ${scenarioPrompt}.`,
-    ])
-  );
-}
-
-function buildEvaluationSuggestion({ grammarErrors, rawSuggestion, turnQualityScore }) {
-  const shortSuggestion = clampText(rawSuggestion, SHORT_SUGGESTION_MAX_CHARS);
-
-  if (grammarErrors.length === 0 && turnQualityScore >= PRAISE_SCORE_THRESHOLD) {
-    return "Excellent work. Clear, natural, and accurate English.";
-  }
-
-  if (shortSuggestion) {
-    return shortSuggestion;
-  }
-
-  if (grammarErrors.length === 0) {
-    return "Good job. Add one more concrete detail in your next sentence.";
-  }
-
-  return "Try a shorter sentence with clear subject, verb, and key detail.";
 }
 
 async function findActiveConversation(userId, conversationId) {
@@ -293,21 +209,6 @@ export async function startConversation(userId, stepId) {
   return { conversation: conv, messages, bossBattle: battle };
 }
 
-export async function sendLearnMessage(userId, conversationId, content) {
-  const quickResult = await sendLearnMessageQuick(userId, conversationId, content);
-  const evaluationResult = await evaluateLearnMessage(
-    userId,
-    conversationId,
-    String(quickResult.userMessage._id)
-  );
-
-  return {
-    userMessage: evaluationResult.userMessage,
-    assistantMessage: quickResult.assistantMessage,
-    bossBattle: evaluationResult.bossBattle,
-  };
-}
-
 export async function sendLearnMessageQuick(userId, conversationId, content) {
   const text = String(content || "").trim();
   if (!text) {
@@ -362,12 +263,21 @@ export async function sendLearnMessageQuick(userId, conversationId, content) {
   const userMsg = await userMsgPromise;
   const quickReply = await quickReplyPromise;
 
-  const assistantMsg = await LearnMessage.create({
-    conversationId: conv._id,
-    role: "ai",
-    content: clampText(quickReply || buildFastTeacherReply(step, text)),
-    timestamp: new Date(),
-  });
+  if (!quickReply || !String(quickReply).trim()) {
+    const err = new Error("OpenAI quick reply returned empty content");
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const assistantMsg =
+    quickReply && String(quickReply).trim()
+      ? await LearnMessage.create({
+        conversationId: conv._id,
+        role: "ai",
+        content: quickReply,
+        timestamp: new Date(),
+      })
+      : null;
 
   return {
     userMessage: userMsg,
@@ -379,20 +289,14 @@ export async function sendLearnMessageQuick(userId, conversationId, content) {
 export async function evaluateLearnMessage(userId, conversationId, messageId) {
   const conv = await findActiveConversation(userId, conversationId);
 
-  const [step, user, battle, userMsg, recentHistory] = await Promise.all([
+  const [step, battle, userMsg] = await Promise.all([
     Step.findById(conv.stepId).lean(),
-    User.findById(userId).select("nativeLanguage targetLanguage").lean(),
     BossBattle.findOne({ conversationId: conv._id }).lean(),
     LearnMessage.findOne({
       _id: messageId,
       conversationId: conv._id,
       role: "user",
     }),
-    LearnMessage.find({ conversationId: conv._id })
-      .sort({ timestamp: -1 })
-      .limit(LLM_HISTORY_LIMIT)
-      .select("_id role content")
-      .lean(),
   ]);
 
   if (!step) {
@@ -419,48 +323,21 @@ export async function evaluateLearnMessage(userId, conversationId, messageId) {
     };
   }
 
-  const historyForLlm = recentHistory
-    .filter((m) => String(m._id) !== String(userMsg._id))
-    .reverse()
-    .map((m) => ({ role: m.role, content: m.content }));
   const bossTasksForLlm = battle?.tasks?.map((t) => ({
     id: t.id,
     description: t.description,
   })) || [];
 
-  const aiResult = await runLearnTurn({
-    systemPrompt: step.aiSystemPrompt || step.scenarioContext || step.title,
-    localeHint: buildLocaleHint(user),
-    history: historyForLlm,
+  const aiResult = await runLearnMessageEvaluation({
     userMessage: userMsg.content,
     bossTasks: bossTasksForLlm,
-    includeReply: false,
-    stepContext: {
-      title: step.title,
-      scenarioTitle: step.scenarioTitle,
-      scenarioContext: trimLongText(step.scenarioContext, 500),
-      scenarioScript: trimLongText(step.scenarioScript, 1200),
-      aiPersona: step.aiPersona,
-      passCriteria: step.passCriteria || [],
-      vocabularyFocus: step.vocabularyFocus || [],
-      grammarFocus: step.grammarFocus || [],
-      gradingDifficulty: step.gradingDifficulty,
-      minimumPassScore: getStepMinimumPassScore(step),
-    },
   });
 
-  let grammarErrors = normalizeGrammarErrors(aiResult.grammarErrors);
-  if (aiResult.turnQualityScore >= PRAISE_SCORE_THRESHOLD && grammarErrors.length <= 1) {
-    grammarErrors = [];
-  }
+  const grammarErrors = normalizeGrammarErrors(aiResult.grammarErrors);
 
   userMsg.grammarErrors = grammarErrors;
-  userMsg.vocabularyUsed = aiResult.vocabularyUsed;
-  userMsg.suggestion = buildEvaluationSuggestion({
-    grammarErrors,
-    rawSuggestion: aiResult.suggestion,
-    turnQualityScore: aiResult.turnQualityScore,
-  });
+  userMsg.vocabularyUsed = [];
+  userMsg.suggestion = aiResult.suggestion;
   userMsg.evaluationScore = aiResult.turnQualityScore;
   await userMsg.save();
 

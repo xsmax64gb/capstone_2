@@ -13,7 +13,6 @@ import {
   endConversation,
   evaluateLearnMessage,
   getBossBattleForConversation,
-  sendLearnMessage,
   sendLearnMessageQuick,
   startConversation,
 } from "../services/learn-conversation.service.js";
@@ -38,6 +37,24 @@ import {
 
 const toId = (x) => String(x?._id ?? x);
 
+const getStepStarsFromScore = (score) => {
+  const normalized = Number(score);
+
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return 0;
+  }
+
+  if (normalized >= 85) {
+    return 3;
+  }
+
+  if (normalized >= 70) {
+    return 2;
+  }
+
+  return 1;
+};
+
 const serializeStep = (s, redacted = false) => {
   const base = {
     id: toId(s),
@@ -45,6 +62,8 @@ const serializeStep = (s, redacted = false) => {
     order: s.order,
     title: s.title,
     type: s.type,
+    bestScore: s.bestScore ?? null,
+    starsEarned: s.starsEarned ?? 0,
   };
   if (redacted) return base;
   return {
@@ -115,7 +134,10 @@ const serializeBossBattle = (battle) =>
   battle
     ? {
       id: toId(battle),
+      bossName: battle.bossName,
+      bossHPMax: battle.bossHPMax,
       bossHPCurrent: battle.bossHPCurrent,
+      playerHPMax: battle.playerHPMax,
       playerHPCurrent: battle.playerHPCurrent,
       tasks: battle.tasks,
       tasksCompleted: battle.tasksCompleted,
@@ -345,14 +367,49 @@ export const getLearnMapBySlug = async (req, res) => {
     if (!map) {
       return res.status(404).json({ success: false, message: "Map not found" });
     }
-    const progress = await UserMapProgress.findOne({
-      userId: req.user.id,
-      mapId: map._id,
-    }).lean();
+    const [progress, stepScoreRows] = await Promise.all([
+      UserMapProgress.findOne({
+        userId: req.user.id,
+        mapId: map._id,
+      }).lean(),
+      LearnConversation.aggregate([
+        {
+          $match: {
+            userId: new mongoose.Types.ObjectId(req.user.id),
+            mapId: map._id,
+            status: "completed",
+            score: { $ne: null },
+          },
+        },
+        {
+          $group: {
+            _id: "$stepId",
+            bestScore: { $max: "$score" },
+          },
+        },
+      ]),
+    ]);
 
     const locked = !progress || progress.status === "locked";
     const stepsRaw = await listStepsForMap(map._id);
-    const steps = stepsRaw.map((s) => serializeStep(s, locked));
+    const stepScoreById = new Map(
+      stepScoreRows.map((row) => [
+        String(row._id),
+        {
+          bestScore: row.bestScore,
+          starsEarned: getStepStarsFromScore(row.bestScore),
+        },
+      ])
+    );
+    const steps = stepsRaw.map((s) =>
+      serializeStep(
+        {
+          ...s,
+          ...(stepScoreById.get(String(s._id)) || {}),
+        },
+        locked
+      )
+    );
 
     return res.json({
       success: true,
@@ -409,31 +466,6 @@ export const postStartLearnConversation = async (req, res) => {
             tasksRequired: result.bossBattle.tasksRequired,
           }
           : null,
-      },
-    });
-  } catch (error) {
-    const code = error.statusCode || 500;
-    return res.status(code).json({ success: false, message: error.message });
-  }
-};
-
-export const postLearnMessage = async (req, res) => {
-  try {
-    if (!req.user?.id) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
-    const { id } = req.params;
-    const { content } = req.body;
-    const result = await sendLearnMessage(req.user.id, id, content);
-    return res.json({
-      success: true,
-      message: "Message sent",
-      data: {
-        userMessage: serializeLearnMessage(result.userMessage),
-        assistantMessage: result.assistantMessage
-          ? serializeLearnMessage(result.assistantMessage)
-          : null,
-        bossBattle: serializeBossBattle(result.bossBattle),
       },
     });
   } catch (error) {
