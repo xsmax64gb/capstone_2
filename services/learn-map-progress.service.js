@@ -12,7 +12,7 @@ import {
 
 async function getFirstStepByMapIdMap() {
   const firstSteps = await Step.aggregate([
-    { $sort: { mapId: 1, order: 1 } },
+    { $sort: { mapId: 1, order: 1, _id: 1 } },
     { $group: { _id: "$mapId", stepId: { $first: "$_id" } } },
   ]);
 
@@ -23,6 +23,61 @@ function shouldAutoUnlockInitialMap(map, firstMap) {
   if (!firstMap) return false;
   if (String(map._id) === String(firstMap._id)) return true;
   return !map.prerequisiteMapId && Number(map.level) === Number(firstMap.level);
+}
+
+function buildCompletedMapIdSet(progressRows) {
+  return new Set(
+    progressRows
+      .filter((progress) => progress.status === "completed" || progress.completedAt)
+      .map((progress) => String(progress.mapId))
+  );
+}
+
+function buildDirectUnlockMapIdSet(maps, completedMapIds) {
+  return new Set(
+    maps
+      .filter(
+        (map) =>
+          map.unlocksMapId && completedMapIds.has(String(map._id))
+      )
+      .map((map) => String(map.unlocksMapId))
+  );
+}
+
+function shouldUnlockMapFromProgress({
+  map,
+  firstMap,
+  maps,
+  completedMapIds,
+  directUnlockMapIds,
+}) {
+  if (shouldAutoUnlockInitialMap(map, firstMap)) {
+    return true;
+  }
+
+  const prerequisiteMapId = map.prerequisiteMapId
+    ? String(map.prerequisiteMapId)
+    : null;
+
+  if (prerequisiteMapId) {
+    return completedMapIds.has(prerequisiteMapId);
+  }
+
+  if (directUnlockMapIds.has(String(map._id))) {
+    return true;
+  }
+
+  const mapIndex = maps.findIndex(
+    (item) => String(item._id) === String(map._id)
+  );
+
+  if (mapIndex <= 0) {
+    return false;
+  }
+
+  return maps
+    .slice(0, mapIndex)
+    .every((item) => completedMapIds.has(String(item._id)));
 }
 
 /**
@@ -40,12 +95,20 @@ export async function ensureUserMapProgress(userId) {
   const byMap = new Map(existing.map((p) => [String(p.mapId), p]));
   const firstStepByMap = await getFirstStepByMapIdMap();
   const firstMap = maps[0];
+  const completedMapIds = buildCompletedMapIdSet(existing);
+  const directUnlockMapIds = buildDirectUnlockMapIdSet(maps, completedMapIds);
 
   for (const map of maps) {
     const idStr = String(map._id);
     const firstStepId = firstStepByMap.get(idStr) || null;
     const progress = byMap.get(idStr);
-    const shouldUnlock = shouldAutoUnlockInitialMap(map, firstMap);
+    const shouldUnlock = shouldUnlockMapFromProgress({
+      map,
+      firstMap,
+      maps,
+      completedMapIds,
+      directUnlockMapIds,
+    });
 
     if (!progress) {
       const status = shouldUnlock ? "active" : "locked";
@@ -108,7 +171,7 @@ export async function unlockMapsAfterPrerequisiteCompleted(userId, completedMapI
     if (!progress || progress.status !== "locked") continue;
 
     const firstStep = await Step.findOne({ mapId: map._id })
-      .sort({ order: 1 })
+      .sort({ order: 1, _id: 1 })
       .select("_id")
       .lean();
 
@@ -133,7 +196,7 @@ export async function unlockMapById(userId, mapIdToUnlock) {
   if (!progress || progress.status !== "locked") return;
 
   const firstStep = await Step.findOne({ mapId: mapIdToUnlock })
-    .sort({ order: 1 })
+    .sort({ order: 1, _id: 1 })
     .select("_id")
     .lean();
 
@@ -193,16 +256,18 @@ export async function recalculateMapTotalXP(mapId) {
 }
 
 export async function listStepsForMap(mapId) {
-  return Step.find({ mapId }).sort({ order: 1 }).lean();
+  return Step.find({ mapId }).sort({ order: 1, _id: 1 }).lean();
 }
 
 export async function getNextStepAfter(stepId, mapId) {
-  const current = await Step.findById(stepId).lean();
-  if (!current) return null;
-  return Step.findOne({
-    mapId,
-    order: { $gt: current.order },
-  })
-    .sort({ order: 1 })
-    .lean();
+  const steps = await listStepsForMap(mapId);
+  const currentIndex = steps.findIndex(
+    (item) => String(item._id) === String(stepId)
+  );
+
+  if (currentIndex < 0) {
+    return null;
+  }
+
+  return steps[currentIndex + 1] || null;
 }

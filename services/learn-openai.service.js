@@ -195,18 +195,25 @@ Return ONLY valid JSON with shape:
 Rules:
 - type must be either lesson or boss.
 - order must be a non-negative integer.
-- title and scenarioTitle should be concise learner-facing labels.
-- scenarioContext should explain learner role, partner role, and communication goal.
-- scenarioScript should describe the expected flow and constraints in enough detail for grading.
-- aiPersona, aiSystemPrompt, and openingMessage must be ready to use directly.
+- title must be very short: max 4 words.
+- scenarioTitle must be short: max 6 words.
+- scenarioContext should explain learner role, partner role, and communication goal in at most 2 short sentences.
+- scenarioScript should describe the expected flow and grading constraints in at most 5 short sentences. Avoid long paragraphs.
+- aiPersona must be a short role label only, max 5 words. Example: "Friendly shop assistant".
+- aiSystemPrompt must be ready to use directly and stay under 90 words.
+- openingMessage must be one short sentence, max 14 words.
 - Use English for learner-facing content and coaching prompts.
-- passCriteria, vocabularyFocus, and grammarFocus should be short, specific arrays.
+- passCriteria must contain 3 or 4 short items only. Each item must be one complete idea, 3-8 words, with no commas.
+- vocabularyFocus must contain 4-6 short items only. Each item should be 1-3 words, with no commas or parentheses.
+- grammarFocus must contain 2-4 short items only. Each item should be 2-5 words, with no commas.
+- Never split one idea across multiple array items.
 - gradingDifficulty must match the admin request.
 - minimumPassScore should be a realistic 0-100 threshold.
 - minTurns and xpReward must be realistic positive integers.
 - If type is lesson, bossName should be an empty string and bossTasks should be an empty array.
-- If type is boss, include a strong bossName and at least 2 concrete bossTasks with stable ids.
+- If type is boss, bossName must be short, max 3 words, and include at least 2 concrete bossTasks with stable ids.
 - Avoid duplicating the same scenario focus as existing steps in the map.
+- Prefer compact admin-friendly content. Do not be verbose in names or persona text.
 - Do not include any extra keys, markdown, or explanations.`;
 
   const userPrompt = `Create a speaking step draft for this map.
@@ -220,12 +227,14 @@ ${existingStepsContext}
 Admin brief: ${input.brief}
 Required type: ${input.type}
 Preferred order: ${input.order}
-Required grading difficulty: ${input.gradingDifficulty}`;
+Required grading difficulty: ${input.gradingDifficulty}
+
+Keep every field concise and practical for admin editing.`;
 
   return callOpenAiJson({
     systemPrompt,
     userPrompt,
-    temperature: 0.6,
+    temperature: 0.4,
   });
 }
 

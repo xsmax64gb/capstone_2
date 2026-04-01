@@ -514,7 +514,7 @@ export async function endConversation(userId, conversationId) {
     progress.updatedAt = new Date();
 
     const next = await getNextStepAfter(step._id, step.mapId);
-    const completedCount = steps.filter((item) => item.order <= step.order).length;
+    const completedCount = requestedStepIndex >= 0 ? requestedStepIndex + 1 : 0;
     const meetsMapXPRequirement =
       (progress.totalXPEarned || 0) >= requiredMapXP;
 

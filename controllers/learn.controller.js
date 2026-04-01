@@ -148,6 +148,32 @@ const serializeBossBattle = (battle) =>
 
 const normalizeString = (value) => String(value || "").trim();
 
+const truncateText = (value, maxLength = 160) => {
+  const normalized = normalizeString(value).replace(/\s+/g, " ");
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+};
+
+const normalizeShortText = (value, fallback = "", maxLength = 80) =>
+  truncateText(value, maxLength) || fallback;
+
+const normalizeListItem = (value, maxLength = 72) =>
+  truncateText(
+    normalizeString(value)
+      .replace(/^\s*[-*•]+\s*/, "")
+      .replace(/^\s*\d+[\).\-\s]+/, "")
+      .replace(/[.;]+$/g, ""),
+    maxLength
+  );
+
 const createSlug = (value) =>
   normalizeString(value)
     .toLowerCase()
@@ -156,17 +182,21 @@ const createSlug = (value) =>
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-const normalizeStringArray = (value, limit = 12) => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
+const normalizeStringArray = (value, limit = 12, maxItemLength = 72) => {
+  const sourceItems = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/\r?\n|;/)
+      : [];
   const nextItems = [];
+  const seen = new Set();
 
-  value.forEach((item) => {
-    const normalized = normalizeString(item);
+  sourceItems.forEach((item) => {
+    const normalized = normalizeListItem(item, maxItemLength);
+    const key = normalized.toLowerCase();
 
-    if (normalized && nextItems.length < limit) {
+    if (normalized && !seen.has(key) && nextItems.length < limit) {
+      seen.add(key);
       nextItems.push(normalized);
     }
   });
@@ -299,34 +329,45 @@ const normalizeGeneratedLearnStepDraft = (payload = {}, input, fallbackOrder = 0
       );
 
   return {
-    title:
-      normalizeString(payload.title) ||
-      (type === "boss" ? "Final Boss Challenge" : "New Speaking Step"),
+    title: normalizeShortText(
+      payload.title,
+      type === "boss" ? "Final Boss" : "New Lesson",
+      48
+    ),
     type,
     order: normalizePositiveInt(payload.order, fallbackOrder, 0),
-    scenarioTitle:
-      normalizeString(payload.scenarioTitle) ||
-      (type === "boss" ? "Boss speaking mission" : "Speaking practice"),
-    scenarioContext: normalizeString(payload.scenarioContext),
-    scenarioScript: normalizeString(payload.scenarioScript),
-    aiPersona:
-      normalizeString(payload.aiPersona) || "Friendly English speaking coach",
-    aiSystemPrompt:
-      normalizeString(payload.aiSystemPrompt) ||
+    scenarioTitle: normalizeShortText(
+      payload.scenarioTitle,
+      type === "boss" ? "Boss speaking mission" : "Speaking practice",
+      64
+    ),
+    scenarioContext: normalizeShortText(payload.scenarioContext, "", 260),
+    scenarioScript: normalizeShortText(payload.scenarioScript, "", 700),
+    aiPersona: normalizeShortText(
+      payload.aiPersona,
+      "Friendly speaking coach",
+      48
+    ),
+    aiSystemPrompt: normalizeShortText(
+      payload.aiSystemPrompt,
       "You are a friendly English tutor. Keep replies short, practical, and natural.",
-    openingMessage:
-      normalizeString(payload.openingMessage) ||
+      700
+    ),
+    openingMessage: normalizeShortText(
+      payload.openingMessage,
       "Hi! Let's practice speaking English together. Ready?",
+      140
+    ),
     minTurns: normalizePositiveInt(payload.minTurns, type === "boss" ? 3 : 2, 1),
     xpReward: normalizePositiveInt(payload.xpReward, type === "boss" ? 50 : 20, 0),
     gradingDifficulty,
     minimumPassScore: minimumPassScoreInput,
-    passCriteria: normalizeStringArray(payload.passCriteria, 8),
-    vocabularyFocus: normalizeStringArray(payload.vocabularyFocus, 12),
-    grammarFocus: normalizeStringArray(payload.grammarFocus, 12),
+    passCriteria: normalizeStringArray(payload.passCriteria, 5, 72),
+    vocabularyFocus: normalizeStringArray(payload.vocabularyFocus, 6, 40),
+    grammarFocus: normalizeStringArray(payload.grammarFocus, 4, 48),
     bossName:
       type === "boss"
-        ? normalizeString(payload.bossName) || "Boss cuoi chang"
+        ? normalizeShortText(payload.bossName, "Boss cuoi chang", 40)
         : "",
     bossTasks:
       type === "boss" ? normalizeBossTasks(payload.bossTasks, 2) : [],
@@ -775,7 +816,7 @@ export const adminDeleteLearnMap = async (req, res) => {
 export const adminListSteps = async (req, res) => {
   try {
     const { mapId } = req.params;
-    const steps = await Step.find({ mapId }).sort({ order: 1 }).lean();
+    const steps = await Step.find({ mapId }).sort({ order: 1, _id: 1 }).lean();
     return res.json({
       success: true,
       data: { items: steps.map((s) => serializeStep(s, false)) },
@@ -800,7 +841,7 @@ export const adminGenerateStepDraft = async (req, res) => {
     }
 
     const input = normalizeGenerateLearnStepRequest(req.body);
-    const existingSteps = await Step.find({ mapId }).sort({ order: 1 }).lean();
+    const existingSteps = await Step.find({ mapId }).sort({ order: 1, _id: 1 }).lean();
     const fallbackOrder =
       existingSteps.length > 0
         ? Math.max(...existingSteps.map((step) => step.order || 0)) + 1
@@ -839,9 +880,17 @@ export const adminCreateStep = async (req, res) => {
       return res.status(400).json({ success: false, message: "title and type required" });
     }
     const orderNum = Number(b.order);
+    const lastStep = await Step.findOne({ mapId })
+      .sort({ order: -1, _id: -1 })
+      .select("order")
+      .lean();
+    const fallbackOrder =
+      Number.isFinite(orderNum) && orderNum >= 0
+        ? orderNum
+        : Math.max(0, Number(lastStep?.order) || -1) + 1;
     const step = await Step.create({
       mapId,
-      order: Number.isFinite(orderNum) ? orderNum : 0,
+      order: fallbackOrder,
       title: String(b.title).trim(),
       type: b.type,
       scenarioTitle: b.scenarioTitle || "",
