@@ -7,6 +7,8 @@ import {
   adminDeleteAchievement,
   adminDeleteLearnMap,
   adminDeleteStep,
+  adminGenerateLearnMapDraft,
+  adminGenerateStepDraft,
   adminListAchievements,
   adminListLearnMaps,
   adminListSteps,
@@ -18,6 +20,8 @@ import {
   getMyLearnAchievements,
   listLearnMaps,
   postEndLearnConversation,
+  postLearnMessageEvaluation,
+  postLearnMessageQuick,
   postLearnMessage,
   postStartLearnConversation,
 } from "../controllers/learn.controller.js";
@@ -29,16 +33,34 @@ router.get("/learn/maps", requireAuth, listLearnMaps);
 router.get("/learn/maps/:slug", requireAuth, getLearnMapBySlug);
 router.post("/learn/steps/:stepId/conversations", requireAuth, postStartLearnConversation);
 router.get("/learn/conversations/:id", requireAuth, getLearnConversation);
+router.post("/learn/conversations/:id/messages/quick", requireAuth, postLearnMessageQuick);
+router.post(
+  "/learn/conversations/:id/messages/:messageId/evaluation",
+  requireAuth,
+  postLearnMessageEvaluation
+);
 router.post("/learn/conversations/:id/messages", requireAuth, postLearnMessage);
 router.post("/learn/conversations/:id/end", requireAuth, postEndLearnConversation);
 router.get("/learn/achievements/me", requireAuth, getMyLearnAchievements);
 
 router.get("/admin/learn/maps", requireAuth, requireAdmin, adminListLearnMaps);
+router.post(
+  "/admin/learn/maps/generate-ai",
+  requireAuth,
+  requireAdmin,
+  adminGenerateLearnMapDraft
+);
 router.post("/admin/learn/maps", requireAuth, requireAdmin, adminCreateLearnMap);
 router.put("/admin/learn/maps/:id", requireAuth, requireAdmin, adminUpdateLearnMap);
 router.delete("/admin/learn/maps/:id", requireAuth, requireAdmin, adminDeleteLearnMap);
 
 router.get("/admin/learn/maps/:mapId/steps", requireAuth, requireAdmin, adminListSteps);
+router.post(
+  "/admin/learn/maps/:mapId/steps/generate-ai",
+  requireAuth,
+  requireAdmin,
+  adminGenerateStepDraft
+);
 router.post("/admin/learn/maps/:mapId/steps", requireAuth, requireAdmin, adminCreateStep);
 router.put("/admin/learn/steps/:id", requireAuth, requireAdmin, adminUpdateStep);
 router.delete("/admin/learn/steps/:id", requireAuth, requireAdmin, adminDeleteStep);

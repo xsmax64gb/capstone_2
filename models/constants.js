@@ -8,6 +8,7 @@ const AI_MESSAGE_SENDERS = ["ai", "user", "system"];
 const PROGRESS_STATUSES = ["new", "learning", "reviewing", "mastered"];
 const MAP_PROGRESS_STATUSES = ["locked", "active", "completed"];
 const STEP_TYPES = ["lesson", "boss"];
+const LEARN_SCORING_DIFFICULTIES = ["easy", "medium", "hard"];
 const LEARN_CONVERSATION_STATUSES = ["in_progress", "completed", "failed"];
 const LEARN_MESSAGE_ROLES = ["user", "ai"];
 const BOSS_RESULTS = ["win", "loss", "timeout"];
@@ -23,6 +24,7 @@ export {
   PROGRESS_STATUSES,
   MAP_PROGRESS_STATUSES,
   STEP_TYPES,
+  LEARN_SCORING_DIFFICULTIES,
   LEARN_CONVERSATION_STATUSES,
   LEARN_MESSAGE_ROLES,
   BOSS_RESULTS,

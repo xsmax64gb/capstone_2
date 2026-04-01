@@ -7,6 +7,7 @@ const mapSchema = new mongoose.Schema(
     description: { type: String, trim: true, default: "" },
     coverImageUrl: { type: String, trim: true, default: "" },
     theme: { type: String, trim: true, default: "" },
+    level: { type: Number, default: 1, min: 1 },
     order: { type: Number, default: 0 },
     prerequisiteMapId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -15,6 +16,7 @@ const mapSchema = new mongoose.Schema(
     },
     isPublished: { type: Boolean, default: false },
     totalXP: { type: Number, default: 0, min: 0 },
+    requiredXPToComplete: { type: Number, default: 0, min: 0 },
     bossXPReward: { type: Number, default: 0, min: 0 },
     unlocksMapId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -28,6 +30,6 @@ const mapSchema = new mongoose.Schema(
   }
 );
 
-mapSchema.index({ order: 1, isPublished: 1 });
+mapSchema.index({ level: 1, order: 1, isPublished: 1 });
 
 export default mongoose.models.Map || mongoose.model("Map", mapSchema);

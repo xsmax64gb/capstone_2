@@ -4,6 +4,7 @@ import {
   activateAdminPlacementTest,
   confirmPlacementResult,
   createAdminPlacementTest,
+  createAdminPlacementTestWithAi,
   deleteAdminPlacementTest,
   getActivePlacementTest,
   getAdminPlacementTestById,
@@ -23,6 +24,12 @@ router.get(
   requireAuth,
   requireAdmin,
   getAdminPlacementTestById
+);
+router.post(
+  "/admin/placement-tests/generate-ai",
+  requireAuth,
+  requireAdmin,
+  createAdminPlacementTestWithAi
 );
 router.post(
   "/admin/placement-tests",

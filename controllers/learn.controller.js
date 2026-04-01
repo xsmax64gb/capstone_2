@@ -11,11 +11,30 @@ import {
 import { listUserAchievements } from "../services/learn-achievement.service.js";
 import {
   endConversation,
+  evaluateLearnMessage,
   getBossBattleForConversation,
   sendLearnMessage,
+  sendLearnMessageQuick,
   startConversation,
 } from "../services/learn-conversation.service.js";
-import { ensureUserMapProgress, listStepsForMap } from "../services/learn-map-progress.service.js";
+import {
+  ensureUserMapProgress,
+  listStepsForMap,
+  recalculateMapTotalXP,
+} from "../services/learn-map-progress.service.js";
+import {
+  generateLearnMapDraft,
+  generateLearnStepDraft,
+} from "../services/learn-openai.service.js";
+import {
+  LEARN_MAP_SORT,
+  DEFAULT_LEARN_SCORING_DIFFICULTY,
+  getMapRequiredXP,
+  getStepMinimumPassScore,
+  normalizeLearnMapLevel,
+  normalizeLearnScoringDifficulty,
+  normalizePositiveInt,
+} from "../helper/learn-rules.js";
 
 const toId = (x) => String(x?._id ?? x);
 
@@ -32,13 +51,17 @@ const serializeStep = (s, redacted = false) => {
     ...base,
     scenarioTitle: s.scenarioTitle,
     scenarioContext: s.scenarioContext,
+    scenarioScript: s.scenarioScript,
     aiPersona: s.aiPersona,
     aiSystemPrompt: s.aiSystemPrompt,
     openingMessage: s.openingMessage,
     xpReward: s.xpReward,
     minTurns: s.minTurns,
+    gradingDifficulty: normalizeLearnScoringDifficulty(s.gradingDifficulty),
+    minimumPassScore: getStepMinimumPassScore(s),
     passCriteria: s.passCriteria || [],
     vocabularyFocus: s.vocabularyFocus || [],
+    grammarFocus: s.grammarFocus || [],
     bossTasks: s.bossTasks || [],
     bossHPMax: s.bossHPMax,
     playerHPMax: s.playerHPMax,
@@ -53,10 +76,12 @@ const serializeMap = (m) => ({
   description: m.description,
   coverImageUrl: m.coverImageUrl,
   theme: m.theme,
+  level: normalizeLearnMapLevel(m.level, 1),
   order: m.order,
   prerequisiteMapId: m.prerequisiteMapId ? String(m.prerequisiteMapId) : null,
   unlocksMapId: m.unlocksMapId ? String(m.unlocksMapId) : null,
   totalXP: m.totalXP,
+  requiredXPToComplete: getMapRequiredXP(m),
   bossXPReward: m.bossXPReward,
   isPublished: m.isPublished,
 });
@@ -76,6 +101,216 @@ const serializeProgress = (p) =>
       }
     : null;
 
+const serializeLearnMessage = (message) => ({
+  id: toId(message),
+  role: message.role,
+  content: message.content,
+  timestamp: message.timestamp,
+  grammarErrors: message.grammarErrors,
+  suggestion: message.suggestion,
+  evaluationScore: message.evaluationScore,
+});
+
+const serializeBossBattle = (battle) =>
+  battle
+    ? {
+        id: toId(battle),
+        bossHPCurrent: battle.bossHPCurrent,
+        playerHPCurrent: battle.playerHPCurrent,
+        tasks: battle.tasks,
+        tasksCompleted: battle.tasksCompleted,
+        tasksRequired: battle.tasksRequired,
+        result: battle.result,
+      }
+    : null;
+
+const normalizeString = (value) => String(value || "").trim();
+
+const createSlug = (value) =>
+  normalizeString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const normalizeStringArray = (value, limit = 12) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const nextItems = [];
+
+  value.forEach((item) => {
+    const normalized = normalizeString(item);
+
+    if (normalized && nextItems.length < limit) {
+      nextItems.push(normalized);
+    }
+  });
+
+  return nextItems;
+};
+
+const normalizeStepType = (value, fallback = "lesson") => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (normalized === "boss" || normalized === "lesson") {
+    return normalized;
+  }
+
+  return fallback;
+};
+
+const normalizeBossTasks = (value, minimumCount = 0) => {
+  const baseTasks = Array.isArray(value) ? value : [];
+  const tasks = baseTasks
+    .map((item, index) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const task = item;
+      const id = normalizeString(task.id || `task-${index + 1}`);
+      const description = normalizeString(task.description);
+
+      if (!id || !description) {
+        return null;
+      }
+
+      return { id, description };
+    })
+    .filter(Boolean);
+
+  if (tasks.length >= minimumCount) {
+    return tasks;
+  }
+
+  while (tasks.length < minimumCount) {
+    const index = tasks.length + 1;
+    tasks.push({
+      id: `task-${index}`,
+      description:
+        index === 1
+          ? "Open the conversation clearly and stay in character."
+          : "Complete the main speaking goal with natural English.",
+    });
+  }
+
+  return tasks;
+};
+
+const normalizeGenerateLearnMapRequest = (payload = {}) => {
+  const brief = normalizeString(payload.brief);
+  const level = normalizeLearnMapLevel(payload.level, 1);
+  const theme = normalizeString(payload.theme);
+  const isPublished = Boolean(payload.isPublished);
+
+  if (!brief) {
+    throw new Error("Brief tạo map với AI là bắt buộc.");
+  }
+
+  return {
+    brief,
+    level,
+    theme,
+    isPublished,
+  };
+};
+
+const normalizeGenerateLearnStepRequest = (payload = {}) => {
+  const brief = normalizeString(payload.brief);
+  const type = normalizeStepType(payload.type, "lesson");
+  const gradingDifficulty = normalizeLearnScoringDifficulty(
+    payload.gradingDifficulty || DEFAULT_LEARN_SCORING_DIFFICULTY
+  );
+
+  if (!brief) {
+    throw new Error("Brief tạo chặng với AI là bắt buộc.");
+  }
+
+  return {
+    brief,
+    type,
+    gradingDifficulty,
+  };
+};
+
+const normalizeGeneratedLearnMapDraft = (payload = {}, input, fallbackOrder = 0) => {
+  const title = normalizeString(payload.title) || "Speaking Map";
+  const slug = createSlug(payload.slug || title) || `speaking-map-${Date.now()}`;
+  const theme = normalizeString(payload.theme || input.theme);
+
+  return {
+    title,
+    slug,
+    description: normalizeString(payload.description || input.brief),
+    theme,
+    level: normalizeLearnMapLevel(payload.level || input.level, input.level),
+    order: normalizePositiveInt(payload.order, fallbackOrder, 0),
+    requiredXPToComplete: normalizePositiveInt(
+      payload.requiredXPToComplete,
+      0,
+      0
+    ),
+    bossXPReward: normalizePositiveInt(payload.bossXPReward, 50, 0),
+    isPublished: Boolean(
+      payload.isPublished === undefined ? input.isPublished : payload.isPublished
+    ),
+  };
+};
+
+const normalizeGeneratedLearnStepDraft = (payload = {}, input, fallbackOrder = 0) => {
+  const type = normalizeStepType(payload.type || input.type, input.type);
+  const gradingDifficulty = normalizeLearnScoringDifficulty(
+    payload.gradingDifficulty || input.gradingDifficulty
+  );
+  const minimumPassScoreInput =
+    payload.minimumPassScore === null || payload.minimumPassScore === ""
+      ? null
+      : normalizePositiveInt(
+          payload.minimumPassScore,
+          getStepMinimumPassScore({ gradingDifficulty }),
+          1
+        );
+
+  return {
+    title:
+      normalizeString(payload.title) ||
+      (type === "boss" ? "Final Boss Challenge" : "New Speaking Step"),
+    type,
+    order: normalizePositiveInt(payload.order, fallbackOrder, 0),
+    scenarioTitle:
+      normalizeString(payload.scenarioTitle) ||
+      (type === "boss" ? "Boss speaking mission" : "Speaking practice"),
+    scenarioContext: normalizeString(payload.scenarioContext),
+    scenarioScript: normalizeString(payload.scenarioScript),
+    aiPersona:
+      normalizeString(payload.aiPersona) || "Friendly English speaking coach",
+    aiSystemPrompt:
+      normalizeString(payload.aiSystemPrompt) ||
+      "You are a friendly English tutor. Keep replies short, practical, and natural.",
+    openingMessage:
+      normalizeString(payload.openingMessage) ||
+      "Hi! Let's practice speaking English together. Ready?",
+    minTurns: normalizePositiveInt(payload.minTurns, type === "boss" ? 3 : 2, 1),
+    xpReward: normalizePositiveInt(payload.xpReward, type === "boss" ? 50 : 20, 0),
+    gradingDifficulty,
+    minimumPassScore: minimumPassScoreInput,
+    passCriteria: normalizeStringArray(payload.passCriteria, 8),
+    vocabularyFocus: normalizeStringArray(payload.vocabularyFocus, 12),
+    grammarFocus: normalizeStringArray(payload.grammarFocus, 12),
+    bossName:
+      type === "boss"
+        ? normalizeString(payload.bossName) || "Boss cuoi chang"
+        : "",
+    bossTasks:
+      type === "boss" ? normalizeBossTasks(payload.bossTasks, 2) : [],
+  };
+};
+
 // --- User ---
 
 export const listLearnMaps = async (req, res) => {
@@ -84,7 +319,7 @@ export const listLearnMaps = async (req, res) => {
       return res.status(401).json({ success: false, message: "Unauthorized" });
     }
     await ensureUserMapProgress(req.user.id);
-    const maps = await LearnMap.find({ isPublished: true }).sort({ order: 1 }).lean();
+    const maps = await LearnMap.find({ isPublished: true }).sort(LEARN_MAP_SORT).lean();
     const progressRows = await UserMapProgress.find({ userId: req.user.id }).lean();
     const progByMap = new Map(progressRows.map((p) => [String(p.mapId), p]));
 
@@ -194,34 +429,63 @@ export const postLearnMessage = async (req, res) => {
       success: true,
       message: "Message sent",
       data: {
-        userMessage: {
-          id: toId(result.userMessage),
-          role: result.userMessage.role,
-          content: result.userMessage.content,
-          grammarErrors: result.userMessage.grammarErrors,
-          suggestion: result.userMessage.suggestion,
-          evaluationScore: result.userMessage.evaluationScore,
-        },
-        bossBattle: result.bossBattle
-          ? {
-              id: toId(result.bossBattle),
-              bossHPCurrent: result.bossBattle.bossHPCurrent,
-              playerHPCurrent: result.bossBattle.playerHPCurrent,
-              tasks: result.bossBattle.tasks,
-              tasksCompleted: result.bossBattle.tasksCompleted,
-              tasksRequired: result.bossBattle.tasksRequired,
-              result: result.bossBattle.result,
-            }
+        userMessage: serializeLearnMessage(result.userMessage),
+        assistantMessage: result.assistantMessage
+          ? serializeLearnMessage(result.assistantMessage)
           : null,
-        messages: result.messages.map((m) => ({
-          id: toId(m),
-          role: m.role,
-          content: m.content,
-          timestamp: m.timestamp,
-          grammarErrors: m.grammarErrors,
-          suggestion: m.suggestion,
-          evaluationScore: m.evaluationScore,
-        })),
+        bossBattle: serializeBossBattle(result.bossBattle),
+      },
+    });
+  } catch (error) {
+    const code = error.statusCode || 500;
+    return res.status(code).json({ success: false, message: error.message });
+  }
+};
+
+export const postLearnMessageQuick = async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const { id } = req.params;
+    const { content } = req.body;
+    const result = await sendLearnMessageQuick(req.user.id, id, content);
+
+    return res.json({
+      success: true,
+      message: "Fast message sent",
+      data: {
+        userMessage: serializeLearnMessage(result.userMessage),
+        assistantMessage: result.assistantMessage
+          ? serializeLearnMessage(result.assistantMessage)
+          : null,
+      },
+    });
+  } catch (error) {
+    const code = error.statusCode || 500;
+    return res.status(code).json({ success: false, message: error.message });
+  }
+};
+
+export const postLearnMessageEvaluation = async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const { id, messageId } = req.params;
+    const result = await evaluateLearnMessage(req.user.id, id, messageId);
+
+    return res.json({
+      success: true,
+      message: result.alreadyEvaluated
+        ? "Message already evaluated"
+        : "Message evaluation completed",
+      data: {
+        userMessage: serializeLearnMessage(result.userMessage),
+        bossBattle: serializeBossBattle(result.bossBattle),
+        alreadyEvaluated: Boolean(result.alreadyEvaluated),
       },
     });
   } catch (error) {
@@ -252,6 +516,11 @@ export const postEndLearnConversation = async (req, res) => {
         },
         passed: result.passed,
         bossWin: result.bossWin,
+        requiredScore: result.minimumPassScore,
+        mapCompleted: result.mapCompleted,
+        currentMapXP: result.currentMapXP,
+        requiredMapXP: result.requiredMapXP,
+        replayAttempt: result.replayAttempt,
       },
     });
   } catch (error) {
@@ -337,13 +606,39 @@ export const getMyLearnAchievements = async (req, res) => {
 
 export const adminListLearnMaps = async (_req, res) => {
   try {
-    const items = await LearnMap.find({}).sort({ order: 1, createdAt: 1 }).lean();
+    const items = await LearnMap.find({}).sort(LEARN_MAP_SORT).lean();
     return res.json({
       success: true,
       data: { items: items.map(serializeMap) },
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const adminGenerateLearnMapDraft = async (req, res) => {
+  try {
+    const input = normalizeGenerateLearnMapRequest(req.body);
+    const lastMapInLevel = await LearnMap.findOne({ level: input.level })
+      .sort({ order: -1, createdAt: -1 })
+      .lean();
+    const fallbackOrder = normalizePositiveInt(lastMapInLevel?.order, -1, -1) + 1;
+    const aiDraft = await generateLearnMapDraft({
+      ...input,
+      order: fallbackOrder,
+    });
+    const draft = normalizeGeneratedLearnMapDraft(aiDraft, input, fallbackOrder);
+
+    return res.json({
+      success: true,
+      message: "Learn map draft generated",
+      data: draft,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to generate learn map draft",
+    });
   }
 };
 
@@ -363,14 +658,20 @@ export const adminCreateLearnMap = async (req, res) => {
       description: body.description || "",
       coverImageUrl: body.coverImageUrl || "",
       theme: body.theme || "",
+      level: normalizeLearnMapLevel(body.level, 1),
       order: Number(body.order) || 0,
       prerequisiteMapId: body.prerequisiteMapId || null,
       isPublished: Boolean(body.isPublished),
-      totalXP: Number(body.totalXP) || 0,
+      totalXP: 0,
+      requiredXPToComplete: normalizePositiveInt(body.requiredXPToComplete, 0, 0),
       bossXPReward: Number(body.bossXPReward) || 0,
       unlocksMapId: body.unlocksMapId || null,
     });
-    return res.status(201).json({ success: true, data: { map: serializeMap(map) } });
+    const recalculated = await recalculateMapTotalXP(map._id);
+    return res.status(201).json({
+      success: true,
+      data: { map: serializeMap(recalculated || map) },
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -393,12 +694,21 @@ export const adminUpdateLearnMap = async (req, res) => {
         ...(body.description !== undefined && { description: body.description }),
         ...(body.coverImageUrl !== undefined && { coverImageUrl: body.coverImageUrl }),
         ...(body.theme !== undefined && { theme: body.theme }),
+        ...(body.level !== undefined && {
+          level: normalizeLearnMapLevel(body.level, 1),
+        }),
         ...(body.order !== undefined && { order: Number(body.order) }),
         ...(body.prerequisiteMapId !== undefined && {
           prerequisiteMapId: body.prerequisiteMapId || null,
         }),
         ...(body.isPublished !== undefined && { isPublished: Boolean(body.isPublished) }),
-        ...(body.totalXP !== undefined && { totalXP: Number(body.totalXP) }),
+        ...(body.requiredXPToComplete !== undefined && {
+          requiredXPToComplete: normalizePositiveInt(
+            body.requiredXPToComplete,
+            0,
+            0
+          ),
+        }),
         ...(body.bossXPReward !== undefined && {
           bossXPReward: Number(body.bossXPReward),
         }),
@@ -407,9 +717,13 @@ export const adminUpdateLearnMap = async (req, res) => {
         }),
       },
       { new: true }
-    ).lean();
+    );
     if (!map) return res.status(404).json({ success: false, message: "Not found" });
-    return res.json({ success: true, data: { map: serializeMap(map) } });
+    const recalculated = await recalculateMapTotalXP(map._id);
+    return res.json({
+      success: true,
+      data: { map: serializeMap(recalculated || map.toObject()) },
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -439,6 +753,49 @@ export const adminListSteps = async (req, res) => {
   }
 };
 
+export const adminGenerateStepDraft = async (req, res) => {
+  try {
+    const { mapId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(mapId)) {
+      return res.status(400).json({ success: false, message: "Invalid mapId" });
+    }
+
+    const map = await LearnMap.findById(mapId).lean();
+
+    if (!map) {
+      return res.status(404).json({ success: false, message: "Map not found" });
+    }
+
+    const input = normalizeGenerateLearnStepRequest(req.body);
+    const existingSteps = await Step.find({ mapId }).sort({ order: 1 }).lean();
+    const fallbackOrder =
+      existingSteps.length > 0
+        ? Math.max(...existingSteps.map((step) => step.order || 0)) + 1
+        : 0;
+    const aiDraft = await generateLearnStepDraft({
+      map,
+      existingSteps,
+      input: {
+        ...input,
+        order: fallbackOrder,
+      },
+    });
+    const draft = normalizeGeneratedLearnStepDraft(aiDraft, input, fallbackOrder);
+
+    return res.json({
+      success: true,
+      message: "Learn step draft generated",
+      data: draft,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to generate learn step draft",
+    });
+  }
+};
+
 export const adminCreateStep = async (req, res) => {
   try {
     const { mapId } = req.params;
@@ -457,19 +814,30 @@ export const adminCreateStep = async (req, res) => {
       type: b.type,
       scenarioTitle: b.scenarioTitle || "",
       scenarioContext: b.scenarioContext || "",
+      scenarioScript: b.scenarioScript || "",
       aiPersona: b.aiPersona || "",
       aiSystemPrompt: b.aiSystemPrompt || "",
       openingMessage: b.openingMessage || "",
       xpReward: Number(b.xpReward) || 0,
       minTurns: Number(b.minTurns) || 1,
+      gradingDifficulty: normalizeLearnScoringDifficulty(b.gradingDifficulty),
+      minimumPassScore:
+        b.minimumPassScore === null || b.minimumPassScore === ""
+          ? null
+          : normalizePositiveInt(b.minimumPassScore, 0, 0),
       passCriteria: Array.isArray(b.passCriteria) ? b.passCriteria : [],
       vocabularyFocus: Array.isArray(b.vocabularyFocus) ? b.vocabularyFocus : [],
+      grammarFocus: Array.isArray(b.grammarFocus) ? b.grammarFocus : [],
       bossTasks: Array.isArray(b.bossTasks) ? b.bossTasks : [],
       bossHPMax: Number(b.bossHPMax) || 100,
       playerHPMax: Number(b.playerHPMax) || 100,
       bossName: b.bossName || "",
     });
-    return res.status(201).json({ success: true, data: { step: serializeStep(step, false) } });
+    await recalculateMapTotalXP(mapId);
+    return res.status(201).json({
+      success: true,
+      data: { step: serializeStep(step, false) },
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -487,16 +855,29 @@ export const adminUpdateStep = async (req, res) => {
         ...(b.type !== undefined && { type: b.type }),
         ...(b.scenarioTitle !== undefined && { scenarioTitle: b.scenarioTitle }),
         ...(b.scenarioContext !== undefined && { scenarioContext: b.scenarioContext }),
+        ...(b.scenarioScript !== undefined && { scenarioScript: b.scenarioScript }),
         ...(b.aiPersona !== undefined && { aiPersona: b.aiPersona }),
         ...(b.aiSystemPrompt !== undefined && { aiSystemPrompt: b.aiSystemPrompt }),
         ...(b.openingMessage !== undefined && { openingMessage: b.openingMessage }),
         ...(b.xpReward !== undefined && { xpReward: Number(b.xpReward) }),
         ...(b.minTurns !== undefined && { minTurns: Number(b.minTurns) }),
+        ...(b.gradingDifficulty !== undefined && {
+          gradingDifficulty: normalizeLearnScoringDifficulty(b.gradingDifficulty),
+        }),
+        ...(b.minimumPassScore !== undefined && {
+          minimumPassScore:
+            b.minimumPassScore === null || b.minimumPassScore === ""
+              ? null
+              : normalizePositiveInt(b.minimumPassScore, 0, 0),
+        }),
         ...(b.passCriteria !== undefined && {
           passCriteria: Array.isArray(b.passCriteria) ? b.passCriteria : [],
         }),
         ...(b.vocabularyFocus !== undefined && {
           vocabularyFocus: Array.isArray(b.vocabularyFocus) ? b.vocabularyFocus : [],
+        }),
+        ...(b.grammarFocus !== undefined && {
+          grammarFocus: Array.isArray(b.grammarFocus) ? b.grammarFocus : [],
         }),
         ...(b.bossTasks !== undefined && {
           bossTasks: Array.isArray(b.bossTasks) ? b.bossTasks : [],
@@ -506,9 +887,13 @@ export const adminUpdateStep = async (req, res) => {
         ...(b.bossName !== undefined && { bossName: b.bossName }),
       },
       { new: true }
-    ).lean();
+    );
     if (!step) return res.status(404).json({ success: false, message: "Not found" });
-    return res.json({ success: true, data: { step: serializeStep(step, false) } });
+    await recalculateMapTotalXP(step.mapId);
+    return res.json({
+      success: true,
+      data: { step: serializeStep(step.toObject(), false) },
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -517,7 +902,10 @@ export const adminUpdateStep = async (req, res) => {
 export const adminDeleteStep = async (req, res) => {
   try {
     const { id } = req.params;
-    await Step.findByIdAndDelete(id);
+    const step = await Step.findByIdAndDelete(id).lean();
+    if (step?.mapId) {
+      await recalculateMapTotalXP(step.mapId);
+    }
     return res.json({ success: true, message: "Deleted" });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

@@ -7,14 +7,26 @@ import {
   UserProgress,
 } from "../models/index.js";
 import { sanitizeUser } from "../helper/auth.helper.js";
+import { postOpenAiChatCompletion } from "../helper/openai.helper.js";
+import { uploadBufferToCloudinary } from "../helper/upload.helper.js";
 import { LEVELS, PLACEMENT_SKILL_TYPES } from "../models/constants.js";
 
 const DEFAULT_LEVEL = "A1";
 const DEFAULT_SKILL = "grammar";
 const DEFAULT_QUESTION_TYPE = "mcq";
 const PLACEMENT_QUESTION_TYPES = ["mcq", "true_false", "fill_blank"];
+const DEFAULT_AI_MODEL =
+  process.env.PLACEMENT_OPENAI_MODEL ||
+  process.env.PLACEMENT_AI_MODEL ||
+  "gpt-4o-mini";
+const DEFAULT_TTS_MODEL = process.env.PLACEMENT_TTS_MODEL || "gpt-4o-mini-tts";
+const DEFAULT_TTS_VOICE = process.env.PLACEMENT_TTS_VOICE || "alloy";
 
 const toIsoDate = (value) => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
   const date = value instanceof Date ? value : new Date(value);
 
   if (Number.isNaN(date.getTime())) {
@@ -25,6 +37,7 @@ const toIsoDate = (value) => {
 };
 
 const normalizeString = (value) => String(value ?? "").trim();
+const normalizeLowerString = (value) => normalizeString(value).toLowerCase();
 
 const toFiniteNumber = (value, fallback = 0) => {
   const nextValue = Number(value);
@@ -75,6 +88,7 @@ const serializePlacementQuestionForAdmin = (question) => ({
   prompt: question.prompt || "",
   instruction: question.instruction || "",
   passage: question.passage || "",
+  audioUrl: question.audioUrl || "",
   type: question.type || DEFAULT_QUESTION_TYPE,
   options: Array.isArray(question.options) ? question.options : [],
   correctOptionIndex: question.correctOptionIndex ?? 0,
@@ -90,6 +104,7 @@ const serializePlacementQuestionForUser = (question) => ({
   prompt: question.prompt || "",
   instruction: question.instruction || "",
   passage: question.passage || "",
+  audioUrl: question.audioUrl || "",
   type: question.type || DEFAULT_QUESTION_TYPE,
   options: Array.isArray(question.options) ? question.options : [],
   skillType: question.skillType || DEFAULT_SKILL,
@@ -125,6 +140,20 @@ const serializePlacementTestForAdmin = (test) => {
     updatedAt: toIsoDate(test.updatedAt),
   };
 };
+
+const serializePlacementDraftForAdmin = (draft) =>
+  serializePlacementTestForAdmin({
+    _id: draft.id || createNestedId("placement-draft"),
+    title: draft.title || "",
+    description: draft.description || "",
+    instructions: draft.instructions || "",
+    durationMinutes: draft.durationMinutes ?? 10,
+    isActive: Boolean(draft.isActive),
+    questions: draft.questions || [],
+    levelRules: draft.levelRules || [],
+    createdAt: draft.createdAt ?? null,
+    updatedAt: draft.updatedAt ?? null,
+  });
 
 const serializePlacementTestForUser = (test) => {
   const questions = (test.questions || [])
@@ -235,6 +264,7 @@ const normalizeQuestionPayload = (question, index) => {
     prompt,
     instruction: normalizeString(question?.instruction),
     passage: normalizeString(question?.passage),
+    audioUrl: normalizeString(question?.audioUrl),
     type: ensureQuestionType(question?.type),
     options,
     correctOptionIndex,
@@ -331,7 +361,315 @@ const normalizePlacementTestPayload = (payload = {}) => {
   };
 };
 
-const validateAnswers = (test, answersByQuestionId = {}) => {
+const normalizeQuestionCount = (value, label) => {
+  const nextValue = Math.round(toFiniteNumber(value, 0));
+
+  if (nextValue < 0) {
+    throw new Error(`${label} không được nhỏ hơn 0.`);
+  }
+
+  return nextValue;
+};
+
+const normalizeGeneratePlacementTestRequest = (payload = {}) => {
+  const title = normalizeString(payload.title);
+  const context = normalizeString(payload.context);
+  const levelFrom = ensureLevel(payload.levelFrom || "A1");
+  const levelTo = ensureLevel(payload.levelTo || "B2");
+  const listeningQuestions = normalizeQuestionCount(
+    payload.listeningQuestions,
+    "Số câu nghe"
+  );
+  const readingQuestions = normalizeQuestionCount(
+    payload.readingQuestions,
+    "Số câu đọc"
+  );
+  const grammarQuestions = normalizeQuestionCount(
+    payload.grammarQuestions,
+    "Số câu ngữ pháp"
+  );
+  const vocabQuestions = normalizeQuestionCount(
+    payload.vocabQuestions,
+    "Số câu từ vựng"
+  );
+  const totalQuestions =
+    listeningQuestions + readingQuestions + grammarQuestions + vocabQuestions;
+  const durationMinutes = Math.min(
+    180,
+    Math.max(5, Math.round(toFiniteNumber(payload.durationMinutes, 25)))
+  );
+  const description = normalizeString(payload.description);
+  const instructions = normalizeString(payload.instructions);
+  const isActive = Boolean(payload.isActive);
+
+  if (!title) {
+    throw new Error("Tiêu đề bài test là bắt buộc.");
+  }
+
+  if (!context) {
+    throw new Error("Ngữ cảnh tạo đề là bắt buộc.");
+  }
+
+  if (getLevelIndex(levelFrom) > getLevelIndex(levelTo)) {
+    throw new Error("Level bắt đầu cần nhỏ hơn hoặc bằng level kết thúc.");
+  }
+
+  if (totalQuestions < 5) {
+    throw new Error("Tổng số câu phải từ 5 trở lên.");
+  }
+
+  if (totalQuestions > 60) {
+    throw new Error("Tổng số câu không được vượt quá 60.");
+  }
+
+  return {
+    title,
+    context,
+    levelFrom,
+    levelTo,
+    totalQuestions,
+    listeningQuestions,
+    readingQuestions,
+    grammarQuestions,
+    vocabQuestions,
+    durationMinutes,
+    description,
+    instructions,
+    isActive,
+  };
+};
+
+const callOpenAiForPlacementDraft = async (input) => {
+  const apiKey = process.env.OPENAI_API_KEY || "";
+
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required to generate placement test with AI.");
+  }
+
+  const systemPrompt = `You generate high-quality English placement test data.
+Return ONLY valid JSON with shape:
+{
+  "description": "string",
+  "instructions": "string",
+  "questions": [
+    {
+      "prompt": "string",
+      "instruction": "string",
+      "passage": "string",
+      "type": "mcq|true_false|fill_blank",
+      "options": ["string", "..."],
+      "correctOptionIndex": 0,
+      "skillType": "grammar|vocab|reading|listening",
+      "targetLevel": "A1|A2|B1|B2|C1|C2",
+      "weight": 1,
+      "explanation": "string"
+    }
+  ]
+}
+Rules:
+- Exactly ${input.totalQuestions} questions.
+- Exactly ${input.listeningQuestions} listening questions (skillType=listening).
+- Exactly ${input.readingQuestions} reading questions (skillType=reading).
+- Exactly ${input.grammarQuestions} grammar questions (skillType=grammar).
+- Exactly ${input.vocabQuestions} vocabulary questions (skillType=vocab).
+- Every question has at least 2 options, and correctOptionIndex must be valid.
+- Use ONLY these skill types: listening, reading, grammar, vocab.
+- Keep each prompt/instruction/passage concise and practical for onboarding.
+- Use mixed target levels from ${input.levelFrom} to ${input.levelTo}.
+- For listening questions, write TTS-friendly spoken content in "passage" or "prompt".
+- For reading questions, include short practical texts when needed.
+- Description and instructions must be concise, admin-ready Vietnamese.`;
+
+  const userPrompt = `Create a placement test question set.
+Title: ${input.title}
+Context: ${input.context}
+Description hint: ${input.description || "(auto)"}
+Instruction hint: ${input.instructions || "(auto)"}
+Duration minutes: ${input.durationMinutes}`;
+
+  const response = await postOpenAiChatCompletion({
+    apiKey,
+    body: {
+      model: DEFAULT_AI_MODEL,
+      temperature: 0.4,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    },
+    errorMessagePrefix: "OpenAI generate failed",
+    maxErrorLength: 300,
+  });
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+
+  if (typeof content !== "string") {
+    throw new Error("OpenAI returned invalid generate response.");
+  }
+
+  const parsed = JSON.parse(content);
+  if (!Array.isArray(parsed?.questions)) {
+    throw new Error("OpenAI response does not contain questions array.");
+  }
+
+  return {
+    description: normalizeString(parsed?.description),
+    instructions: normalizeString(parsed?.instructions),
+    questions: parsed.questions,
+  };
+};
+
+const buildLevelRulesFromQuestions = (questions) => {
+  const maxScore = calculateMaxScore(questions);
+  const step = Math.max(1, Math.floor((maxScore + 1) / LEVELS.length));
+
+  return LEVELS.map((level, index) => {
+    const minScore = index === 0 ? 0 : index * step;
+    const maxScoreForLevel =
+      index === LEVELS.length - 1 ? maxScore : Math.min(maxScore, (index + 1) * step - 1);
+
+    return {
+      id: createNestedId("placement-rule"),
+      level,
+      minScore,
+      maxScore: Math.max(minScore, maxScoreForLevel),
+    };
+  });
+};
+
+const shouldGenerateListeningAudio = (question) => {
+  if (normalizeString(question.audioUrl)) {
+    return false;
+  }
+
+  if (question.skillType === "listening") {
+    return true;
+  }
+
+  const combined = [
+    normalizeLowerString(question.prompt),
+    normalizeLowerString(question.instruction),
+    normalizeLowerString(question.passage),
+  ].join(" ");
+
+  return combined.includes("nghe") || combined.includes("listening");
+};
+
+const generateSpeechBuffer = async (text) => {
+  const apiKey = process.env.OPENAI_API_KEY || "";
+
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required to generate TTS audio.");
+  }
+
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: DEFAULT_TTS_MODEL,
+      voice: DEFAULT_TTS_VOICE,
+      input: text,
+      format: "mp3",
+    }),
+  });
+
+  if (!response.ok) {
+    const reason = await response.text();
+    throw new Error(`OpenAI TTS failed (${response.status}): ${reason.slice(0, 240)}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+};
+
+const enrichListeningQuestionsWithAudio = async (questions) => {
+  const nextQuestions = [];
+
+  for (const question of questions) {
+    if (!shouldGenerateListeningAudio(question)) {
+      nextQuestions.push(question);
+      continue;
+    }
+
+    const ttsText = normalizeString(question.passage) || normalizeString(question.prompt);
+
+    if (!ttsText) {
+      nextQuestions.push(question);
+      continue;
+    }
+
+    const audioBuffer = await generateSpeechBuffer(ttsText);
+    const uploadResult = await uploadBufferToCloudinary(audioBuffer, {
+      folder: "placement-tests/listening-audio",
+      publicId: `placement-${question.id}-${Date.now()}`,
+      resourceType: "video",
+      tags: ["placement-test", "listening", "tts"],
+    });
+
+    nextQuestions.push({
+      ...question,
+      audioUrl: uploadResult.secure_url || uploadResult.url || "",
+    });
+  }
+
+  return nextQuestions;
+};
+
+const preparePlacementPayloadForPersistence = async (payload = {}) => {
+  const normalizedPayload = normalizePlacementTestPayload(payload);
+  const questions = await enrichListeningQuestionsWithAudio(normalizedPayload.questions);
+
+  return {
+    ...normalizedPayload,
+    questions,
+  };
+};
+
+const validateGeneratedQuestionsAgainstInput = (questions, input) => {
+  if (questions.length !== input.totalQuestions) {
+    throw new Error(
+      `AI trả về ${questions.length} câu, nhưng hệ thống yêu cầu ${input.totalQuestions} câu.`
+    );
+  }
+
+  const expectedCounts = {
+    listening: input.listeningQuestions,
+    reading: input.readingQuestions,
+    grammar: input.grammarQuestions,
+    vocab: input.vocabQuestions,
+  };
+  const actualCounts = {
+    listening: 0,
+    reading: 0,
+    grammar: 0,
+    vocab: 0,
+  };
+
+  questions.forEach((question) => {
+    if (Object.prototype.hasOwnProperty.call(actualCounts, question.skillType)) {
+      actualCounts[question.skillType] += 1;
+    }
+  });
+
+  for (const [skillType, expectedCount] of Object.entries(expectedCounts)) {
+    if (actualCounts[skillType] !== expectedCount) {
+      throw new Error(
+        `AI trả về ${actualCounts[skillType]} câu ${skillType}, nhưng yêu cầu là ${expectedCount}.`
+      );
+    }
+  }
+};
+
+const validateAnswers = (
+  test,
+  answersByQuestionId = {},
+  { allowPartial = false } = {}
+) => {
   if (
     !answersByQuestionId ||
     typeof answersByQuestionId !== "object" ||
@@ -348,23 +686,30 @@ const validateAnswers = (test, answersByQuestionId = {}) => {
       Number.NaN
     );
 
-    if (
-      !Number.isInteger(selectedOptionIndex) ||
-      selectedOptionIndex < 0 ||
-      selectedOptionIndex >= question.options.length
-    ) {
+    const hasValidAnswer =
+      Number.isInteger(selectedOptionIndex) &&
+      selectedOptionIndex >= 0 &&
+      selectedOptionIndex < question.options.length;
+
+    if (!hasValidAnswer && !allowPartial) {
       throw new Error(`Câu ${index + 1} chưa có đáp án hợp lệ.`);
     }
 
     return {
       question,
-      selectedOptionIndex,
+      selectedOptionIndex: hasValidAnswer ? selectedOptionIndex : null,
     };
   });
 };
 
-const calculatePlacementAttempt = (test, answersByQuestionId) => {
-  const validatedAnswers = validateAnswers(test, answersByQuestionId);
+const calculatePlacementAttempt = (
+  test,
+  answersByQuestionId,
+  { allowPartial = false } = {}
+) => {
+  const validatedAnswers = validateAnswers(test, answersByQuestionId, {
+    allowPartial,
+  });
   const skillBuckets = new Map();
 
   PLACEMENT_SKILL_TYPES.forEach((skillType) => {
@@ -377,8 +722,10 @@ const calculatePlacementAttempt = (test, answersByQuestionId) => {
   });
 
   const answers = validatedAnswers.map(({ question, selectedOptionIndex }) => {
-    const earnedScore =
-      selectedOptionIndex === question.correctOptionIndex ? question.weight || 1 : 0;
+    const isCorrect =
+      selectedOptionIndex !== null &&
+      selectedOptionIndex === question.correctOptionIndex;
+    const earnedScore = isCorrect ? question.weight || 1 : 0;
     const skillBucket = skillBuckets.get(question.skillType);
 
     if (skillBucket) {
@@ -389,7 +736,7 @@ const calculatePlacementAttempt = (test, answersByQuestionId) => {
     return {
       questionId: question.id,
       selectedOptionIndex,
-      isCorrect: selectedOptionIndex === question.correctOptionIndex,
+      isCorrect,
       earnedScore,
     };
   });
@@ -525,7 +872,7 @@ const getAdminPlacementTestById = async (req, res) => {
 
 const createAdminPlacementTest = async (req, res) => {
   try {
-    const payload = normalizePlacementTestPayload(req.body);
+    const payload = await preparePlacementPayloadForPersistence(req.body);
     const test = await PlacementTest.create(payload);
 
     if (payload.isActive) {
@@ -550,9 +897,53 @@ const createAdminPlacementTest = async (req, res) => {
   }
 };
 
+const createAdminPlacementTestWithAi = async (req, res) => {
+  try {
+    const input = normalizeGeneratePlacementTestRequest(req.body);
+    const aiDraft = await callOpenAiForPlacementDraft(input);
+    const baseQuestions = aiDraft.questions.map((question, index) =>
+      normalizeQuestionPayload(
+        {
+          ...question,
+          id: question?.id || createNestedId(`placement-question-${index + 1}`),
+        },
+        index
+      )
+    );
+    validateGeneratedQuestionsAgainstInput(baseQuestions, input);
+
+    const payload = normalizePlacementTestPayload({
+      title: input.title,
+      description:
+        input.description ||
+        aiDraft.description ||
+        `Bài test được tạo bởi AI theo ngữ cảnh: ${input.context.slice(0, 240)}`,
+      instructions:
+        input.instructions ||
+        aiDraft.instructions ||
+        "Đọc kỹ từng câu hỏi. Với câu nghe, bấm phát audio trước khi chọn đáp án.",
+      durationMinutes: input.durationMinutes,
+      isActive: input.isActive,
+      questions: baseQuestions,
+      levelRules: buildLevelRulesFromQuestions(baseQuestions),
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Placement test draft generated with AI successfully",
+      data: serializePlacementDraftForAdmin(payload),
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to generate placement test with AI",
+    });
+  }
+};
+
 const updateAdminPlacementTest = async (req, res) => {
   try {
-    const payload = normalizePlacementTestPayload(req.body);
+    const payload = await preparePlacementPayloadForPersistence(req.body);
     const test = await PlacementTest.findById(req.params.id);
 
     if (!test) {
@@ -674,6 +1065,8 @@ const submitPlacementTest = async (req, res) => {
   try {
     const userId = req.user?.id;
     const testId = normalizeString(req.body?.testId);
+    const allowPartialSubmission =
+      Boolean(req.body?.allowPartial) || Boolean(req.body?.autoSubmitted);
     const activeTest = await PlacementTest.findOne({ isActive: true }).sort({
       updatedAt: -1,
     });
@@ -694,7 +1087,8 @@ const submitPlacementTest = async (req, res) => {
 
     const calculated = calculatePlacementAttempt(
       activeTest,
-      req.body?.answersByQuestionId || {}
+      req.body?.answersByQuestionId || {},
+      { allowPartial: allowPartialSubmission }
     );
 
     const attempt = await PlacementAttempt.create({
@@ -883,6 +1277,7 @@ export {
   activateAdminPlacementTest,
   confirmPlacementResult,
   createAdminPlacementTest,
+  createAdminPlacementTestWithAi,
   deleteAdminPlacementTest,
   getActivePlacementTest,
   getAdminPlacementTestById,

@@ -26,6 +26,11 @@ const placementQuestionSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    audioUrl: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     type: {
       type: String,
       enum: PLACEMENT_QUESTION_TYPES,

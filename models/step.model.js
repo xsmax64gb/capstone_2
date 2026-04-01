@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-import { STEP_TYPES } from "./constants.js";
+import { LEARN_SCORING_DIFFICULTIES, STEP_TYPES } from "./constants.js";
 
 const bossTaskSchema = new mongoose.Schema(
   {
@@ -23,13 +23,21 @@ const stepSchema = new mongoose.Schema(
     type: { type: String, enum: STEP_TYPES, required: true },
     scenarioTitle: { type: String, trim: true, default: "" },
     scenarioContext: { type: String, trim: true, default: "" },
+    scenarioScript: { type: String, trim: true, default: "" },
     aiPersona: { type: String, trim: true, default: "" },
     aiSystemPrompt: { type: String, trim: true, default: "" },
     openingMessage: { type: String, trim: true, default: "" },
     xpReward: { type: Number, default: 0, min: 0 },
     minTurns: { type: Number, default: 1, min: 0 },
+    gradingDifficulty: {
+      type: String,
+      enum: LEARN_SCORING_DIFFICULTIES,
+      default: "medium",
+    },
+    minimumPassScore: { type: Number, default: null, min: 0, max: 100 },
     passCriteria: { type: [String], default: [] },
     vocabularyFocus: { type: [String], default: [] },
+    grammarFocus: { type: [String], default: [] },
     bossTasks: { type: [bossTaskSchema], default: [] },
     bossHPMax: { type: Number, default: 100, min: 1 },
     playerHPMax: { type: Number, default: 100, min: 1 },
