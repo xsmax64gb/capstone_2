@@ -23,10 +23,10 @@ const attachUserFromToken = async (req, _res, next) => {
         }
 
         const user = await User.findById(userId)
-            .select("_id fullName email role currentLevel")
+            .select("_id fullName email role currentLevel isActive")
             .lean();
 
-        if (!user) {
+        if (!user || user.isActive === false) {
             return next();
         }
 
@@ -38,6 +38,7 @@ const attachUserFromToken = async (req, _res, next) => {
             currentLevel: user.currentLevel,
             fullName: user.fullName,
             name: user.fullName,
+            isActive: Boolean(user.isActive ?? true),
         };
 
         return next();
