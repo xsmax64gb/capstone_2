@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 import { uploadImageFile } from "../helper/upload.helper.js";
-import { Vocabulary, VocabularySet } from "../models/index.js";
+import { Vocabulary, VocabularySet, VocabularyAttempt, User } from "../models/index.js";
 
 const toIsoDate = (value) => {
   const date = value instanceof Date ? value : new Date(value);
@@ -756,13 +756,105 @@ const getVocabularySummary = async (_req, res) => {
 
 const getRecommendedVocabularies = async (req, res) => {
   try {
-    const sets = await VocabularySet.find({ isActive: true })
+    const userId = req.user?.id;
+
+    // Get user's current level
+    const user = await User.findById(userId).lean();
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const userLevel = user.currentLevel || "A1";
+    const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
+    const currentLevelIndex = LEVELS.indexOf(userLevel);
+
+    // Get vocabulary sets at user's level + 1 level above
+    const targetLevels = [
+      userLevel,
+      currentLevelIndex < LEVELS.length - 1 ? LEVELS[currentLevelIndex + 1] : userLevel
+    ];
+
+    // Get user's recent attempts (last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const recentAttempts = await VocabularyAttempt.find({
+      userId: new mongoose.Types.ObjectId(userId),
+      submittedAt: { $gte: thirtyDaysAgo }
+    }).lean();
+
+    // Create a map of setId -> best score for easy lookup
+    const attemptMap = new Map();
+    recentAttempts.forEach((attempt) => {
+      const setIdStr = String(attempt.setId);
+      if (!attemptMap.has(setIdStr)) {
+        attemptMap.set(setIdStr, attempt.percent);
+      } else {
+        // Keep the best score
+        attemptMap.set(setIdStr, Math.max(attemptMap.get(setIdStr), attempt.percent));
+      }
+    });
+
+    // Get all vocabulary sets at target levels
+    const allSets = await VocabularySet.find({
+      isActive: true,
+      level: { $in: targetLevels }
+    })
       .sort({ sortOrder: 1, updatedAt: -1 })
-      .limit(6)
       .lean();
 
-    const wordsMap = await getWordsMapBySetIds(sets.map((s) => s._id));
-    const items = sets.map((set) =>
+    // Prioritize sets:
+    // 1. Sets with recent attempts but score < 80% (not mastered)
+    // 2. Sets not attempted yet
+    const unmasteredSets = [];
+    const newSets = [];
+
+    allSets.forEach((set) => {
+      const setIdStr = String(set._id);
+      const bestScore = attemptMap.get(setIdStr);
+
+      if (bestScore !== undefined && bestScore < 80) {
+        // Unmastered set - prioritize this
+        unmasteredSets.push({
+          ...set,
+          score: bestScore,
+          lastAttemptTime: recentAttempts.find(a => String(a.setId) === setIdStr)?.submittedAt
+        });
+      } else if (bestScore === undefined) {
+        // Not attempted yet
+        newSets.push(set);
+      }
+      // Skip mastered sets (score >= 80%)
+    });
+
+    // Sort unmastered by most recent attempt
+    unmasteredSets.sort((a, b) =>
+      new Date(b.lastAttemptTime) - new Date(a.lastAttemptTime)
+    );
+
+    // Combine: unmastered + new sets, limit to 6
+    const recommendedSetIds = [
+      ...unmasteredSets.slice(0, 3).map(s => s._id),
+      ...newSets.slice(0, 3).map(s => s._id)
+    ];
+
+    const recommendedSets = allSets.filter(s =>
+      recommendedSetIds.includes(s._id)
+    );
+
+    // If we don't have enough recommendations, add more from the full list
+    if (recommendedSets.length < 6) {
+      const additionalSets = allSets
+        .filter(s => !recommendedSetIds.includes(s._id))
+        .slice(0, 6 - recommendedSets.length);
+      recommendedSets.push(...additionalSets);
+    }
+
+    const wordsMap = await getWordsMapBySetIds(
+      recommendedSets.map((s) => s._id)
+    );
+    const items = recommendedSets.map((set) =>
       normalizeVocabularySetForUser(set, wordsMap.get(String(set._id)) || [])
     );
 
@@ -991,9 +1083,9 @@ const submitVocabularyAttempt = async (req, res) => {
     const earnedXp = Math.round(score * 2);
     const resultLabel =
       percent >= 90 ? "Excellent!" :
-      percent >= 70 ? "Good job!" :
-      percent >= 50 ? "Keep going!" :
-      "Needs more practice";
+        percent >= 70 ? "Good job!" :
+          percent >= 50 ? "Keep going!" :
+            "Needs more practice";
 
     const attempt = await VA.create({
       setId: set._id,

@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-import { Exercise, ExerciseAttempt } from "../models/index.js";
+import { Exercise, ExerciseAttempt, User } from "../models/index.js";
 import {
     DEFAULT_COVER_IMAGES,
     GENERIC_HINTS,
@@ -311,18 +311,110 @@ const getExerciseSummary = async (_req, res) => {
 
 const getRecommendedExercises = async (req, res) => {
     try {
-        const all = await getExercises();
-        const limit = Math.min(20, Math.max(1, toSafeInt(req.query.limit, 3)));
         const userId = req.user?.id;
+        const limit = Math.min(20, Math.max(1, toSafeInt(req.query.limit, 6)));
 
-        let attempts = [];
-        if (userId && mongoose.Types.ObjectId.isValid(userId)) {
-            attempts = await ExerciseAttempt.find({ userId })
-                .select("exerciseRef score total")
-                .lean();
+        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized",
+            });
         }
 
-        const items = pickRecommendedByAttempts(all, attempts, limit).map(buildPublicExercise);
+        // 1. Get user and their level
+        const user = await User.findById(userId).lean();
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found",
+            });
+        }
+
+        const userLevel = user.currentLevel || "A1";
+
+        // 2. Define target levels (current + 1 above)
+        const levelProgression = ["A1", "A2", "B1", "B2", "C1", "C2"];
+        const currentLevelIndex = levelProgression.indexOf(userLevel);
+        const nextLevel = currentLevelIndex < levelProgression.length - 1
+            ? levelProgression[currentLevelIndex + 1]
+            : userLevel;
+        const targetLevels = [userLevel, nextLevel];
+
+        // 3. Get all exercises first
+        const all = await getExercises();
+        const targetExercises = all.filter(ex => targetLevels.includes(ex.level));
+
+        if (targetExercises.length === 0) {
+            return res.status(200).json({
+                success: true,
+                message: "Recommended exercises fetched successfully",
+                data: [],
+            });
+        }
+
+        // 4. Get recent attempts (last 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        const recentAttempts = await ExerciseAttempt.find({
+            userId,
+            submittedAt: { $gte: thirtyDaysAgo },
+        })
+            .select("exerciseRef percent submittedAt")
+            .lean();
+
+        const attemptMap = new Map();
+        recentAttempts.forEach(attempt => {
+            const key = String(attempt.exerciseRef);
+            attemptMap.set(key, attempt);
+        });
+
+        // 5. Categorize exercises
+        const unmasteredExercises = [];
+        const masteredExercises = [];
+        const newExercises = [];
+
+        targetExercises.forEach(exercise => {
+            const attempt = attemptMap.get(exercise.id);
+            if (!attempt) {
+                newExercises.push(exercise);
+            } else if (attempt.percent < 80) {
+                unmasteredExercises.push({
+                    ...exercise,
+                    lastAttempt: attempt.submittedAt,
+                    lastScore: attempt.percent,
+                });
+            } else {
+                masteredExercises.push(exercise);
+            }
+        });
+
+        // 6. Sort unmastered by most recent first
+        unmasteredExercises.sort((a, b) =>
+            new Date(b.lastAttempt) - new Date(a.lastAttempt)
+        );
+
+        // 7. Combine recommendations: unmastered first, then new
+        let recommendations = [];
+
+        // Add top unmastered
+        const unmasteredCount = Math.min(3, unmasteredExercises.length);
+        recommendations.push(...unmasteredExercises.slice(0, unmasteredCount));
+
+        // Add new exercises if needed
+        const newCount = Math.min(limit - recommendations.length, newExercises.length);
+        recommendations.push(...newExercises.slice(0, newCount));
+
+        // If still need more and have mastered exercises, add them
+        if (recommendations.length < limit && masteredExercises.length > 0) {
+            const masteredCount = Math.min(
+                limit - recommendations.length,
+                masteredExercises.length
+            );
+            recommendations.push(...masteredExercises.slice(0, masteredCount));
+        }
+
+        const items = recommendations.map(buildPublicExercise);
 
         return res.status(200).json({
             success: true,
