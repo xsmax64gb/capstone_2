@@ -328,9 +328,22 @@ export async function evaluateLearnMessage(userId, conversationId, messageId) {
     description: t.description,
   })) || [];
 
+  // Get the previous AI message for context
+  const previousAiMessage = await LearnMessage.findOne({
+    conversationId: conv._id,
+    role: "ai",
+    timestamp: { $lt: userMsg.timestamp },
+  }).sort({ timestamp: -1 }).lean();
+
   const aiResult = await runLearnMessageEvaluation({
     userMessage: userMsg.content,
     bossTasks: bossTasksForLlm,
+    previousAiMessage: previousAiMessage?.content,
+    stepContext: {
+      title: step.title,
+      scenarioTitle: step.scenarioTitle,
+      scenarioContext: step.scenarioContext,
+    },
   });
 
   const grammarErrors = normalizeGrammarErrors(aiResult.grammarErrors);
@@ -495,6 +508,7 @@ export async function endConversation(userId, conversationId) {
   }
 
   conv.xpEarned = xpEarned;
+
   await conv.save();
 
   await User.updateOne(

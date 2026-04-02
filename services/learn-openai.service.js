@@ -8,9 +8,9 @@ import { postOpenAiChatCompletion } from "../helper/openai.helper.js";
 
 const getApiKey = () => process.env.OPENAI_API_KEY || "";
 
-const getModel = () => process.env.LEARN_OPENAI_MODEL || "gpt-4o-mini";
+const getModel = () => process.env.LEARN_OPENAI_MODEL || "gpt-5.4-mini";
 const getEvaluationModel = () =>
-  process.env.LEARN_EVALUATION_OPENAI_MODEL || "gpt-4o-mini";
+  process.env.LEARN_EVALUATION_OPENAI_MODEL || "gpt-5.4-mini";
 const QUICK_REPLY_MAX_CHARS = 180;
 const DEFAULT_QUICK_REPLY_TIMEOUT_MS = 30000;
 
@@ -25,8 +25,8 @@ const getQuickReplyTimeoutMs = () => {
 };
 
 function getModelConfig(model = getModel()) {
-  // gpt-5-mini only supports temperature=1 (default)
-  if (model.includes("gpt-5") || model === "gpt-5-mini") {
+  // gpt-5.x models only support temperature=1 (default)
+  if (model.includes("gpt-5") || model === "gpt-5-mini" || model === "gpt-5.4-mini") {
     return { supportsTemperature: false };
   }
   return { supportsTemperature: true };
@@ -324,6 +324,8 @@ export async function runLearnQuickReply({
 export async function runLearnMessageEvaluation({
   userMessage,
   bossTasks = [],
+  previousAiMessage,
+  stepContext = {},
 }) {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -337,10 +339,18 @@ export async function runLearnMessageEvaluation({
       )}`
       : "TASKS_CONTEXT: []";
 
+  const stepContextText = stepContext.scenarioTitle || stepContext.scenarioContext || stepContext.title
+    ? `STEP_CONTEXT: ${[stepContext.scenarioTitle, stepContext.scenarioContext, stepContext.title].filter(Boolean).join(' - ')}`
+    : 'STEP_CONTEXT: General conversation practice';
+
+  const previousMessageContext = previousAiMessage
+    ? `PREVIOUS_AI_MESSAGE: "${previousAiMessage}"`
+    : 'PREVIOUS_AI_MESSAGE: (First message in conversation)';
+
   const messages = [
     {
       role: "system",
-      content: `You are a fast English grammar checker for one learner sentence.
+      content: `You are a strict English conversation teacher evaluating one learner response.
 Return a single JSON object only with keys:
 - "isCorrect": boolean
 - "grammarErrors": array of { "message": string, "rule": string, "span": string }
@@ -349,12 +359,16 @@ Return a single JSON object only with keys:
 - "tasksCompletedIds": string[]
 
 Rules:
-- Check only the learner sentence itself. Do not use broader conversation context.
-- If the sentence is grammatically natural enough, set "isCorrect" to true, keep "grammarErrors" empty, set "improvedSentence" to "", and write a short praise in "feedback".
-- If the sentence has grammar problems, set "isCorrect" to false, list only the important issues, provide one natural corrected sentence in "improvedSentence", and write one short fix tip in "feedback".
-- Keep "feedback" short and direct.
-- Only include task ids from TASKS_CONTEXT when the single learner sentence clearly completes them.
+- Evaluate both grammar AND topic relevance based on STEP_CONTEXT and PREVIOUS_AI_MESSAGE.
+- If the sentence is completely off-topic or doesn't relate to the lesson context, give low scores and strict feedback in Vietnamese.
+- If the sentence is on-topic but has grammar issues, focus on grammar fixes.
+- If the sentence is both grammatically correct AND on-topic, give high scores and praise in Vietnamese.
+- For off-topic responses, set "isCorrect" to false even if grammar is perfect, and explain the topic mismatch in Vietnamese.
+- Keep "feedback" short and direct in Vietnamese.
+- Only include task ids from TASKS_CONTEXT when the response clearly completes them.
 
+${stepContextText}
+${previousMessageContext}
 ${tasksContext}`,
     },
     {
@@ -396,15 +410,15 @@ ${tasksContext}`,
       span: String(item?.span ?? ""),
     }))
     : [];
-  const isCorrect = Boolean(parsed.isCorrect) || grammarErrors.length === 0;
+  const isCorrect = Boolean(parsed.isCorrect);
   const improvedSentence = String(parsed.improvedSentence ?? "").trim();
   const feedback = String(parsed.feedback ?? "").trim();
-  const suggestion = isCorrect
-    ? feedback || "Great job. Your sentence sounds natural."
-    : improvedSentence || feedback || "Try the corrected sentence above.";
+  const suggestion = improvedSentence || feedback || "Please try to respond to the lesson topic.";
   const turnQualityScore = isCorrect
     ? 95
-    : Math.max(40, 90 - grammarErrors.length * 15);
+    : grammarErrors.length === 0
+      ? 60 // Off-topic but grammatically correct
+      : Math.max(40, 90 - grammarErrors.length * 15);
 
   return {
     grammarErrors: isCorrect ? [] : grammarErrors,
@@ -479,7 +493,7 @@ export async function runSessionSummary({
     {
       role: "system",
       content: `You evaluate a language learning dialogue. ${criteriaText}
-Return JSON only: { "summary": string (feedback for learner), "score": number 0-100, "goalsAchieved": string[] (which goals, vocabulary, or grammar targets were clearly met; use exact strings from the provided lists when possible) }`,
+Return JSON only: { "summary": "nhận xét bằng tiếng Việt về buổi học của học viên", "score": number 0-100, "goalsAchieved": string[] (which goals, vocabulary, or grammar targets were clearly met; use exact strings from the provided lists when possible) }`,
     },
     { role: "user", content: transcript },
   ];
@@ -496,7 +510,13 @@ Return JSON only: { "summary": string (feedback for learner), "score": number 0-
 
   const data = await res.json();
   const raw = data?.choices?.[0]?.message?.content;
-  const parsed = JSON.parse(raw);
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (parseError) {
+    console.error("Failed to parse OpenAI response:", raw);
+    parsed = {};
+  }
 
   return {
     summary: String(parsed.summary ?? ""),
