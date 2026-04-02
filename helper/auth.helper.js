@@ -32,10 +32,12 @@ const sanitizeUser = (user) => {
     nativeLanguage: user.nativeLanguage || "",
     timezone: user.timezone || "",
     role: user.role,
+    isActive: Boolean(user.isActive ?? true),
     currentLevel: user.currentLevel,
     exp: user.exp,
     onboardingDone: user.onboardingDone,
     placementScore: user.placementScore,
+    lastActiveAt: user.lastActiveAt,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };

@@ -25,6 +25,14 @@ const userSchema = new mongoose.Schema(
       enum: USER_ROLES,
       default: "user",
     },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    deactivatedAt: {
+      type: Date,
+      default: null,
+    },
     currentLevel: {
       type: String,
       enum: LEVELS,
@@ -90,6 +98,6 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-userSchema.index({ role: 1, currentLevel: 1 });
+userSchema.index({ role: 1, isActive: 1, currentLevel: 1 });
 
 export default mongoose.models.User || mongoose.model("User", userSchema);
