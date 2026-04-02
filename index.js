@@ -13,18 +13,46 @@ import { attachUserFromToken } from "./middleware/auth.middleware.js";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-const corsOrigins = String(process.env.CORS_ORIGINS || "*")
+const defaultCorsOrigins = [
+  "http://localhost:3000",
+  "https://smartlingo-flax.vercel.app",
+];
+
+const configuredCorsOrigins = String(process.env.CORS_ORIGINS || "")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
 
+const hasWildcardCorsOrigin = configuredCorsOrigins.includes("*");
+
+const allowedCorsOrigins = [
+  ...new Set([
+    ...defaultCorsOrigins,
+    ...configuredCorsOrigins.filter((origin) => origin !== "*"),
+  ]),
+];
+
 const corsOptions = {
-  origin: corsOrigins.includes("*") ? true : corsOrigins,
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (hasWildcardCorsOrigin || allowedCorsOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error(`CORS blocked origin: ${origin}`));
+  },
   credentials:
     String(process.env.CORS_CREDENTIALS || "false").toLowerCase() === "true",
+  optionsSuccessStatus: 204,
 };
 
 app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
