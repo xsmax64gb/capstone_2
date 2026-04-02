@@ -13,7 +13,18 @@ import { attachUserFromToken } from "./middleware/auth.middleware.js";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+const corsOrigins = String(process.env.CORS_ORIGINS || "*")
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+const corsOptions = {
+  origin: corsOrigins.includes("*") ? true : corsOrigins,
+  credentials:
+    String(process.env.CORS_CREDENTIALS || "false").toLowerCase() === "true",
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));

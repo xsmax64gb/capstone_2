@@ -63,6 +63,8 @@ Cấu hình các biến môi trường cần thiết:
 - `CLOUDINARY_*`: Cloudinary credentials
 - `OPENAI_API_KEY`: OpenAI API key
 - `SENDGRID_*`: SendGrid credentials
+- `CORS_ORIGINS`: Danh sách origin được phép (phân tách bằng dấu phẩy, hoặc `*`)
+- `CORS_CREDENTIALS`: Bật/tắt credentials (`true` hoặc `false`)
 
 ### 3. Khởi động database
 
@@ -192,6 +194,8 @@ CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
 OPENAI_API_KEY=your_openai_key
 SENDGRID_API_KEY=your_sendgrid_key
+CORS_ORIGINS=https://your-frontend-domain.com,https://admin.your-frontend-domain.com
+CORS_CREDENTIALS=false
 ```
 
 ## 🤝 Contributing
