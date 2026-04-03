@@ -1,3 +1,4 @@
+// Kết quả làm bài từ vựng (mode: flashcards/quiz, answers, score, duration)
 import mongoose from "mongoose";
 
 const vocabularyAttemptSchema = new mongoose.Schema(

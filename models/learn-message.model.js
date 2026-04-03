@@ -1,3 +1,4 @@
+// Tin nhắn hội thoại (user/ai, grammar errors, vocabulary, pronunciation score, evaluation)
 import mongoose from "mongoose";
 
 import { LEARN_MESSAGE_ROLES } from "./constants.js";

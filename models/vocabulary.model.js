@@ -1,3 +1,4 @@
+// Từ vựng chi tiết (word, meaning, example, liên kết setId)
 import mongoose from "mongoose";
 
 const vocabularySchema = new mongoose.Schema(

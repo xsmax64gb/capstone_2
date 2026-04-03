@@ -1,3 +1,4 @@
+// Bộ từ vựng (name, description, level, topic, image, isActive, sortOrder)
 import mongoose from "mongoose";
 
 import { LEVELS } from "./constants.js";

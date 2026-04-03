@@ -1,3 +1,4 @@
+// Mã OTP tạm thời cho đăng ký & đổi mật khẩu
 import mongoose from "mongoose";
 
 const OTP_PURPOSES = ["register", "change_password"];

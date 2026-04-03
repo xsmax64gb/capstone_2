@@ -1,3 +1,4 @@
+// Cấp độ AI (A1-C2) với các stage, context, objectives, system prompts, pass rules
 import mongoose from "mongoose";
 
 import { LEVELS, AI_STAGE_TYPES } from "./constants.js";

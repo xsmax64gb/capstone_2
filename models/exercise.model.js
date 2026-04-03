@@ -1,3 +1,4 @@
+// Bài tập (tiêu đề, loại, cấp độ, câu hỏi, options, đáp án, scores)
 import mongoose from "mongoose";
 
 import { LEVELS, EXERCISE_TYPES } from "./constants.js";

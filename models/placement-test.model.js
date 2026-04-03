@@ -1,3 +1,4 @@
+// Đề kiểm tra trình độ (questions, skill types, difficulty rules, scoring)
 import mongoose from "mongoose";
 
 import { LEVELS, PLACEMENT_SKILL_TYPES } from "./constants.js";

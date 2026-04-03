@@ -1,3 +1,4 @@
+// Tiến độ học tập tổng hợp của user (stages, vocabulary, exercise progress)
 import mongoose from "mongoose";
 
 import { LEVELS, PROGRESS_STATUSES } from "./constants.js";

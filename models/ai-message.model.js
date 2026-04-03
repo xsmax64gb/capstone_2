@@ -1,3 +1,4 @@
+// Tin nhắn AI (KHÔNG DÙNG - thay thế bởi LearnMessage)
 import mongoose from "mongoose";
 
 import { AI_MESSAGE_SENDERS } from "./constants.js";

@@ -1,3 +1,4 @@
+// Bản đồ học tập (title, level, prerequisite, XP, boss reward, unlock logic)
 import mongoose from "mongoose";
 
 const mapSchema = new mongoose.Schema(

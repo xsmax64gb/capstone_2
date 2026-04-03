@@ -1,3 +1,4 @@
+// Kết quả làm bài tập của user (answers, score, percent, duration, XP earned)
 import mongoose from "mongoose";
 
 const exerciseAttemptSchema = new mongoose.Schema(

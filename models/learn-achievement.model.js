@@ -1,3 +1,4 @@
+// Thành tựu (key, title, description, icon, trigger condition, XP reward)
 import mongoose from "mongoose";
 
 const learnAchievementSchema = new mongoose.Schema(

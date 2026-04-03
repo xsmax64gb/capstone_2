@@ -1,3 +1,4 @@
+// Lưu thông tin người dùng (email, mật khẩu, tên, role, cấp độ, exp, avatar, bio)
 import mongoose from "mongoose";
 
 import { LEVELS, USER_ROLES } from "./constants.js";

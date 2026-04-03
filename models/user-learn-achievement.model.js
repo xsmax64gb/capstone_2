@@ -1,3 +1,4 @@
+// Thành tựu của user (userId, achievementId, earned timestamp)
 import mongoose from "mongoose";
 
 const userLearnAchievementSchema = new mongoose.Schema(

@@ -1,3 +1,4 @@
+// Tiến độ user trên map (status: locked/active/completed, current step, XP earned, stars, boss defeated)
 import mongoose from "mongoose";
 
 import { MAP_PROGRESS_STATUSES } from "./constants.js";
