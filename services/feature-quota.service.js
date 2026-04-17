@@ -449,4 +449,107 @@ const ensureFeatureAccessAndQuota = async ({
     };
 };
 
-export { ensureFeatureAccessAndQuota };
+const getUserFeatureQuotaOverview = async ({ userId } = {}) => {
+    const normalizedUserId = normalizeTrimmedString(userId);
+    if (!normalizedUserId) {
+        throw createQuotaError({
+            statusCode: 400,
+            code: "FEATURE_QUOTA_INVALID_USER",
+            message: "userId is required to resolve feature quota overview",
+        });
+    }
+
+    const entitlement = await resolveUserEntitlement(normalizedUserId);
+    const featureKeys = Array.from(SUPPORTED_FEATURE_KEYS);
+
+    const features = await Promise.all(
+        featureKeys.map(async (featureKey) => {
+            const scope = entitlement.scopeByFeatureKey.get(featureKey);
+
+            if (!scope) {
+                return {
+                    featureKey,
+                    featureLabel: FEATURE_LABELS[featureKey],
+                    enabled: false,
+                    accessLevel: null,
+                    quota: null,
+                    used: null,
+                    remaining: null,
+                    isUnlimited: false,
+                    isBlocked: true,
+                    quotaPeriod: null,
+                    quotaPeriodLabel: null,
+                    periodStart: null,
+                    periodEnd: null,
+                    note: "",
+                };
+            }
+
+            const quotaValue = toNormalizedQuota(scope.quota);
+            const quotaPeriodLabel =
+                QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod || "thang";
+
+            if (quotaValue === null) {
+                return {
+                    featureKey,
+                    featureLabel: FEATURE_LABELS[featureKey],
+                    enabled: true,
+                    accessLevel: scope.accessLevel,
+                    quota: null,
+                    used: null,
+                    remaining: null,
+                    isUnlimited: true,
+                    isBlocked: false,
+                    quotaPeriod: scope.quotaPeriod,
+                    quotaPeriodLabel,
+                    periodStart: null,
+                    periodEnd: null,
+                    note: scope.note,
+                };
+            }
+
+            const quotaWindow = resolveQuotaWindow({
+                quotaPeriod: scope.quotaPeriod,
+                billingCycle: entitlement.billingCycle,
+                anchorDate: entitlement.anchorDate,
+            });
+
+            const usedCount = await countFeatureUsage({
+                userId: normalizedUserId,
+                featureKey,
+                start: quotaWindow.start,
+                end: quotaWindow.end,
+            });
+
+            const remaining = Math.max(0, quotaValue - usedCount);
+
+            return {
+                featureKey,
+                featureLabel: FEATURE_LABELS[featureKey],
+                enabled: true,
+                accessLevel: scope.accessLevel,
+                quota: quotaValue,
+                used: usedCount,
+                remaining,
+                isUnlimited: false,
+                isBlocked: usedCount >= quotaValue,
+                quotaPeriod: scope.quotaPeriod,
+                quotaPeriodLabel,
+                periodStart: quotaWindow.start.toISOString(),
+                periodEnd: quotaWindow.end ? quotaWindow.end.toISOString() : null,
+                note: scope.note,
+            };
+        })
+    );
+
+    return {
+        generatedAt: new Date().toISOString(),
+        packageName: entitlement.packageName,
+        packageSlug: entitlement.packageSlug,
+        billingCycle: entitlement.billingCycle,
+        source: entitlement.source,
+        features,
+    };
+};
+
+export { ensureFeatureAccessAndQuota, getUserFeatureQuotaOverview };

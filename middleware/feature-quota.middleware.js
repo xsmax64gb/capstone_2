@@ -1,4 +1,5 @@
 import { ensureFeatureAccessAndQuota } from "../services/feature-quota.service.js";
+import { logMonitoringEvent } from "../helper/monitoring.helper.js";
 
 const requireFeatureQuota = (featureKey, { enforceQuota = false } = {}) => {
     return async (req, res, next) => {
@@ -29,6 +30,26 @@ const requireFeatureQuota = (featureKey, { enforceQuota = false } = {}) => {
             const message =
                 String(error?.message || "").trim() ||
                 "Feature quota validation failed";
+
+            if (error?.code === "FEATURE_QUOTA_EXCEEDED") {
+                logMonitoringEvent({
+                    event: "feature_quota_blocked",
+                    source: "feature-quota.middleware",
+                    data: {
+                        method: req.method,
+                        path: req.originalUrl || req.url,
+                        userId: req.user?.id || null,
+                        featureKey,
+                        errorCode: error?.code || null,
+                        statusCode,
+                        quota: error?.data?.quota ?? null,
+                        used: error?.data?.used ?? null,
+                        remaining: error?.data?.remaining ?? null,
+                        quotaPeriod: error?.data?.quotaPeriod || null,
+                        packageSlug: error?.data?.packageSlug || null,
+                    },
+                });
+            }
 
             return res.status(statusCode).json({
                 success: false,

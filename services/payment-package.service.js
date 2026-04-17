@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { logMonitoringEvent } from "../helper/monitoring.helper.js";
 import PaymentPackage, {
     FEATURE_SCOPE_PERIODS,
     PAYMENT_PACKAGE_BILLING_CYCLES,
@@ -443,6 +444,17 @@ const ensureActiveLimit = async ({
 
     const activeCount = await PaymentPackage.countDocuments(filter);
     if (activeCount >= MAX_ACTIVE_PAYMENT_PACKAGES) {
+        logMonitoringEvent({
+            event: "active_package_limit_blocked",
+            source: "payment-package.service",
+            data: {
+                operation,
+                activeCount,
+                activeLimit: MAX_ACTIVE_PAYMENT_PACKAGES,
+                excludedPackageId: excludeId ? String(excludeId) : null,
+            },
+        });
+
         throw buildActiveLimitExceededError({
             operation,
             activeCount,

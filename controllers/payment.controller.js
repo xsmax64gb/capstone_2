@@ -20,6 +20,7 @@ import {
     getPaymentPackagesCatalog,
     updatePaymentPackage,
 } from "../services/payment-package.service.js";
+import { getUserFeatureQuotaOverview } from "../services/feature-quota.service.js";
 import { runPaymentSync } from "../services/payment-sync.service.js";
 
 const MIN_BANK_TRANSFER_AMOUNT = 2000;
@@ -589,6 +590,40 @@ const getPaymentPackages = async (req, res) => {
     }
 };
 
+const getMyFeatureQuotas = async (req, res) => {
+    try {
+        if (!req.user?.id) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized",
+            });
+        }
+
+        const data = await getUserFeatureQuotaOverview({
+            userId: req.user.id,
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: "Feature quotas retrieved successfully",
+            data,
+        });
+    } catch (error) {
+        const statusCode = resolveBusinessErrorStatus(error);
+        const errorMessage =
+            String(error?.message || "").trim() ||
+            "Failed to fetch feature quotas";
+
+        return res.status(statusCode).json({
+            success: false,
+            message: errorMessage,
+            error: errorMessage,
+            errorCode: error?.code || null,
+            details: error?.data || error?.details || null,
+        });
+    }
+};
+
 const postPaymentPackage = async (req, res) => {
     try {
         const createdPackage = await createPaymentPackage(req.body || {});
@@ -644,6 +679,7 @@ export {
     cancelPayment,
     createPayment,
     getPaymentPackages,
+    getMyFeatureQuotas,
     getPayments,
     patchPaymentPackage,
     postPaymentPackage,

@@ -3,6 +3,7 @@ import express from "express";
 import {
     cancelPayment,
     createPayment,
+    getMyFeatureQuotas,
     getPaymentPackages,
     getPayments,
     patchPaymentPackage,
@@ -21,6 +22,7 @@ router.post("/payments/cancel", requireAuth, cancelPayment);
 router.post("/payments/reconcile", requireAuth, reconcilePayment);
 router.post("/payments/sync", requireAuth, requireAdmin, syncPayments);
 router.post("/payments/verify", requireAuth, verifyPayment);
+router.get("/feature-quotas", requireAuth, getMyFeatureQuotas);
 
 router.get("/payment-packages", requireAuth, getPaymentPackages);
 router.post("/payment-packages", requireAuth, requireAdmin, postPaymentPackage);
