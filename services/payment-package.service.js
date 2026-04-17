@@ -100,6 +100,28 @@ const PAYMENT_PACKAGE_FEATURE_LOOKUP = new Set(
     PAYMENT_PACKAGE_FEATURE_CATALOG.map((item) => item.key)
 );
 
+const buildActiveLimitExceededError = ({ operation, activeCount }) => {
+    const normalizedOperation = normalizeTrimmedString(operation).toLowerCase();
+    const operationLabel =
+        normalizedOperation === "create"
+            ? "tạo gói mới ở trạng thái đang mở"
+            : "kích hoạt gói";
+
+    const error = new Error(
+        `Không thể ${operationLabel} vì đã có ${activeCount}/${MAX_ACTIVE_PAYMENT_PACKAGES} gói trả phí đang mở. Vui lòng tắt bớt ít nhất 1 gói trước khi tiếp tục.`
+    );
+
+    error.code = "ACTIVE_PACKAGE_LIMIT_EXCEEDED";
+    error.statusCode = 400;
+    error.details = {
+        operation: normalizedOperation || "activate",
+        activeCount,
+        activeLimit: MAX_ACTIVE_PAYMENT_PACKAGES,
+    };
+
+    return error;
+};
+
 const normalizeTrimmedString = (value) => String(value ?? "").trim();
 
 const normalizeCurrency = (value) => {
@@ -402,7 +424,11 @@ const normalizeFeatureScopes = ({
     });
 };
 
-const ensureActiveLimit = async ({ shouldBeActive, excludeId = null }) => {
+const ensureActiveLimit = async ({
+    shouldBeActive,
+    excludeId = null,
+    operation = "activate",
+} = {}) => {
     if (!shouldBeActive) {
         return;
     }
@@ -417,9 +443,10 @@ const ensureActiveLimit = async ({ shouldBeActive, excludeId = null }) => {
 
     const activeCount = await PaymentPackage.countDocuments(filter);
     if (activeCount >= MAX_ACTIVE_PAYMENT_PACKAGES) {
-        throw new Error(
-            `Only ${MAX_ACTIVE_PAYMENT_PACKAGES} payment packages can be active at the same time`
-        );
+        throw buildActiveLimitExceededError({
+            operation,
+            activeCount,
+        });
     }
 };
 
@@ -516,7 +543,10 @@ const getPaymentPackagesCatalog = async ({ includeInactive = false } = {}) => ({
 
 const createPaymentPackage = async (input = {}) => {
     const payload = buildPaymentPackagePayload(input);
-    await ensureActiveLimit({ shouldBeActive: payload.isActive });
+    await ensureActiveLimit({
+        shouldBeActive: payload.isActive,
+        operation: "create",
+    });
 
     const created = await PaymentPackage.create(payload);
     return mapPaymentPackageDoc(created);
@@ -582,6 +612,7 @@ const updatePaymentPackage = async (packageId, input = {}) => {
     await ensureActiveLimit({
         shouldBeActive: shouldActivate,
         excludeId: existing._id,
+        operation: "activate",
     });
 
     Object.assign(existing, payload);

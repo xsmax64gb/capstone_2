@@ -41,6 +41,10 @@ const normalizeExternalRef = (value) =>
 const shouldManageAllPayments = (req) => req.user?.role === "admin";
 
 const resolveBusinessErrorStatus = (error) => {
+    if (Number.isInteger(error?.statusCode)) {
+        return error.statusCode;
+    }
+
     if (error?.code === 11000) {
         return 400;
     }
@@ -55,7 +59,8 @@ const resolveBusinessErrorStatus = (error) => {
         lowerMessage.includes("minimum") ||
         lowerMessage.includes("at least") ||
         lowerMessage.includes("default free") ||
-        lowerMessage.includes("does not require")
+        lowerMessage.includes("does not require") ||
+        lowerMessage.includes("active_package_limit_exceeded")
     ) {
         return 400;
     }
@@ -594,10 +599,16 @@ const postPaymentPackage = async (req, res) => {
             data: createdPackage,
         });
     } catch (error) {
-        return res.status(resolveBusinessErrorStatus(error)).json({
+        const statusCode = resolveBusinessErrorStatus(error);
+        const errorMessage =
+            String(error?.message || "").trim() || "Failed to create payment package";
+
+        return res.status(statusCode).json({
             success: false,
-            message: "Failed to create payment package",
-            error: error.message,
+            message: errorMessage,
+            error: errorMessage,
+            errorCode: error?.code || null,
+            details: error?.details || null,
         });
     }
 };
@@ -615,10 +626,16 @@ const patchPaymentPackage = async (req, res) => {
             data: updatedPackage,
         });
     } catch (error) {
-        return res.status(resolveBusinessErrorStatus(error)).json({
+        const statusCode = resolveBusinessErrorStatus(error);
+        const errorMessage =
+            String(error?.message || "").trim() || "Failed to update payment package";
+
+        return res.status(statusCode).json({
             success: false,
-            message: "Failed to update payment package",
-            error: error.message,
+            message: errorMessage,
+            error: errorMessage,
+            errorCode: error?.code || null,
+            details: error?.details || null,
         });
     }
 };

@@ -22,6 +22,7 @@ import {
   updateAdminVocabularyWord,
 } from "../controllers/index.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.middleware.js";
+import { requireFeatureQuota } from "../middleware/feature-quota.middleware.js";
 import {
   uploadVocabularyCoverImage,
 } from "../middleware/upload.middleware.js";
@@ -80,22 +81,58 @@ router.delete(
 
 router.use("/vocabularies", requireAuth);
 
-router.get("/vocabularies", listVocabularies);
+router.get(
+  "/vocabularies",
+  requireFeatureQuota("vocabulary_library"),
+  listVocabularies
+);
 
-router.get("/vocabularies/summary", getVocabularySummary);
+router.get(
+  "/vocabularies/summary",
+  requireFeatureQuota("vocabulary_library"),
+  getVocabularySummary
+);
 
-router.get("/vocabularies/recommended", getRecommendedVocabularies);
+router.get(
+  "/vocabularies/recommended",
+  requireFeatureQuota("vocabulary_library"),
+  getRecommendedVocabularies
+);
 
-router.get("/vocabularies/history", getVocabularyHistory);
+router.get(
+  "/vocabularies/history",
+  requireFeatureQuota("vocabulary_library"),
+  getVocabularyHistory
+);
 
-router.get("/vocabularies/:id", getVocabularyById);
+router.get(
+  "/vocabularies/:id",
+  requireFeatureQuota("vocabulary_library"),
+  getVocabularyById
+);
 
-router.get("/vocabularies/:id/hints", getVocabularyHints);
+router.get(
+  "/vocabularies/:id/hints",
+  requireFeatureQuota("vocabulary_library"),
+  getVocabularyHints
+);
 
-router.get("/vocabularies/:id/leaderboard", getVocabularyLeaderboard);
+router.get(
+  "/vocabularies/:id/leaderboard",
+  requireFeatureQuota("vocabulary_library"),
+  getVocabularyLeaderboard
+);
 
-router.get("/vocabularies/:id/review", getVocabularyReview);
+router.get(
+  "/vocabularies/:id/review",
+  requireFeatureQuota("vocabulary_library"),
+  getVocabularyReview
+);
 
-router.post("/vocabularies/:id/submit", submitVocabularyAttempt);
+router.post(
+  "/vocabularies/:id/submit",
+  requireFeatureQuota("vocabulary_library", { enforceQuota: true }),
+  submitVocabularyAttempt
+);
 
 export default router;
