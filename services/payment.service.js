@@ -101,14 +101,14 @@ const toNormalizedScopeQuota = (value) => {
 const normalizePackageFeatureScopes = (scopeList = [], featureKeys = []) => {
     const mapped = Array.isArray(scopeList)
         ? scopeList
-              .map((scope) => ({
-                  featureKey: normalizeTrimmedString(scope?.featureKey),
-                  accessLevel: normalizeTrimmedString(scope?.accessLevel).toLowerCase() || "basic",
-                  quota: toNormalizedScopeQuota(scope?.quota),
-                  quotaPeriod: normalizeTrimmedString(scope?.quotaPeriod).toLowerCase() || "month",
-                  note: normalizeTrimmedString(scope?.note),
-              }))
-              .filter((scope) => scope.featureKey)
+            .map((scope) => ({
+                featureKey: normalizeTrimmedString(scope?.featureKey),
+                accessLevel: normalizeTrimmedString(scope?.accessLevel).toLowerCase() || "basic",
+                quota: toNormalizedScopeQuota(scope?.quota),
+                quotaPeriod: normalizeTrimmedString(scope?.quotaPeriod).toLowerCase() || "month",
+                note: normalizeTrimmedString(scope?.note),
+            }))
+            .filter((scope) => scope.featureKey)
         : [];
 
     if (mapped.length > 0) {
@@ -212,8 +212,8 @@ const createPendingPayment = async (input = {}) => {
         packageName: normalizeTrimmedString(input.packageName) || null,
         packageFeatureKeys: Array.isArray(input.packageFeatureKeys)
             ? input.packageFeatureKeys
-                  .map((value) => normalizeTrimmedString(value))
-                  .filter(Boolean)
+                .map((value) => normalizeTrimmedString(value))
+                .filter(Boolean)
             : [],
         packageFeatureScopes: normalizePackageFeatureScopes(
             input.packageFeatureScopes,

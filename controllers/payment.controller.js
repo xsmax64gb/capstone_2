@@ -533,8 +533,8 @@ const verifyPayment = async (req, res) => {
                 message: allowProceed
                     ? "Payment verification succeeded"
                     : isExpiredPayment
-                      ? "Payment verification expired"
-                      : "Payment verification pending",
+                        ? "Payment verification expired"
+                        : "Payment verification pending",
                 data: {
                     action,
                     allowProceed,
@@ -542,8 +542,8 @@ const verifyPayment = async (req, res) => {
                     decision: allowProceed
                         ? "proceed"
                         : isExpiredPayment
-                          ? "create_new_invoice"
-                          : "wait_for_payment",
+                            ? "create_new_invoice"
+                            : "wait_for_payment",
                 },
             });
         }
@@ -566,7 +566,7 @@ const getPaymentPackages = async (req, res) => {
         const includeInactive =
             shouldManageAllPayments(req) &&
             normalizeTrimmedString(req.query.include_inactive).toLowerCase() ===
-                "true";
+            "true";
         const data = await getPaymentPackagesCatalog({ includeInactive });
 
         return res.status(200).json({

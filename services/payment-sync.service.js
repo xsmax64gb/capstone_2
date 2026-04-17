@@ -166,16 +166,16 @@ const runPaymentSync = async ({
         updatedPayments += affected;
     }
 
-        const message =
-                skippedByRateLimit && xgateRequests === 0
-                        ? "Skipped sync because XGate rate limit window is full"
-                        : skippedByRateLimit
-                            ? "Sync completed with partial data due to XGate rate limit"
-                            : updatedPayments > 0
-                                ? `Updated ${updatedPayments} payment(s) to paid status`
-                                : "Sync completed without matched pending payments";
+    const message =
+        skippedByRateLimit && xgateRequests === 0
+            ? "Skipped sync because XGate rate limit window is full"
+            : skippedByRateLimit
+                ? "Sync completed with partial data due to XGate rate limit"
+                : updatedPayments > 0
+                    ? `Updated ${updatedPayments} payment(s) to paid status`
+                    : "Sync completed without matched pending payments";
 
-        return {
+    return {
         source,
         startedAt: startedAt.toISOString(),
         finishedAt: new Date().toISOString(),

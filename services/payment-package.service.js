@@ -130,15 +130,15 @@ const isDefaultPackageIdentity = ({ slug, price, isDefault } = {}) => {
 const sanitizeFeatureKeys = (featureKeys) =>
     Array.isArray(featureKeys)
         ? Array.from(
-              new Set(
-                  featureKeys
-                      .map((featureKey) => normalizeTrimmedString(featureKey))
-                      .filter(
-                          (featureKey) =>
-                              featureKey && PAYMENT_PACKAGE_FEATURE_LOOKUP.has(featureKey)
-                      )
-              )
-          )
+            new Set(
+                featureKeys
+                    .map((featureKey) => normalizeTrimmedString(featureKey))
+                    .filter(
+                        (featureKey) =>
+                            featureKey && PAYMENT_PACKAGE_FEATURE_LOOKUP.has(featureKey)
+                    )
+            )
+        )
         : [];
 
 const normalizeBillingCycle = (value) => {

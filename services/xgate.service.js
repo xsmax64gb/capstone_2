@@ -214,8 +214,7 @@ const fetchXGateTransactions = async (filters = {}) => {
         }
 
         throw new Error(
-            `XGate request failed with status ${response.status}${
-                errorMessage ? `: ${errorMessage}` : ""
+            `XGate request failed with status ${response.status}${errorMessage ? `: ${errorMessage}` : ""
             }`
         );
     }
