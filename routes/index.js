@@ -7,6 +7,8 @@ import userRouter from "./user.routes.js";
 import vocabularyRouter from "./vocabulary.routes.js";
 import learnRouter from "./learn.routes.js";
 import placementRouter from "./placement.routes.js";
+import paymentRouter from "./payment.routes.js";
+import revenueRouter from "./revenue.routes.js";
 import { healthCheck } from "../controllers/index.js";
 
 const router = express.Router();
@@ -39,5 +41,7 @@ router.use("/", userRouter);
 router.use("/", vocabularyRouter);
 router.use("/", learnRouter);
 router.use("/", placementRouter);
+router.use("/", paymentRouter);
+router.use("/", revenueRouter);
 
 export default router;

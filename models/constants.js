@@ -12,6 +12,8 @@ const LEARN_SCORING_DIFFICULTIES = ["easy", "medium", "hard"];
 const LEARN_CONVERSATION_STATUSES = ["in_progress", "completed", "failed"];
 const LEARN_MESSAGE_ROLES = ["user", "ai"];
 const BOSS_RESULTS = ["win", "loss", "timeout"];
+const PAYMENT_METHODS = ["bank_transfer", "cash", "card"];
+const PAYMENT_STATUSES = ["pending", "paid", "failed"];
 
 export {
   LEVELS,
@@ -28,4 +30,6 @@ export {
   LEARN_CONVERSATION_STATUSES,
   LEARN_MESSAGE_ROLES,
   BOSS_RESULTS,
+  PAYMENT_METHODS,
+  PAYMENT_STATUSES,
 };

@@ -8,7 +8,6 @@ import Exercise from "./exercise.model.js";
 import ExerciseAttempt from "./exercise-attempt.model.js";
 import AiLevel from "./ai-level.model.js";
 import AiSession from "./ai-session.model.js";
-import AiMessage from "./ai-message.model.js";
 import UserProgress from "./user-progress.model.js";
 import Otp from "./otp.model.js";
 import Map from "./map.model.js";
@@ -19,6 +18,8 @@ import LearnMessage from "./learn-message.model.js";
 import BossBattle from "./boss-battle.model.js";
 import LearnAchievement from "./learn-achievement.model.js";
 import UserLearnAchievement from "./user-learn-achievement.model.js";
+import Payment from "./payment.model.js";
+import PaymentPricing from "./payment-pricing.model.js";
 
 export {
   User,
@@ -31,7 +32,6 @@ export {
   ExerciseAttempt,
   AiLevel,
   AiSession,
-  AiMessage,
   UserProgress,
   Otp,
   Map,
@@ -42,4 +42,6 @@ export {
   BossBattle,
   LearnAchievement,
   UserLearnAchievement,
+  Payment,
+  PaymentPricing,
 };
