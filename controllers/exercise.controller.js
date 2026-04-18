@@ -373,6 +373,7 @@ const listExercises = async (req, res) => {
             level,
             type,
             topic,
+            personal,
             page = "1",
             limit = "20",
             includeQuestions = "false",
@@ -381,9 +382,13 @@ const listExercises = async (req, res) => {
         const normalizedQuery = String(query).trim().toLowerCase();
         const pageNumber = Math.max(1, toSafeInt(page, 1));
         const limitNumber = Math.min(100, Math.max(1, toSafeInt(limit, 20)));
+        const personalOnly = String(personal || "").toLowerCase() === "true";
 
         const filtered = all.filter((item) => {
             if (!canAccessExercise(item, userId)) {
+                return false;
+            }
+            if (personalOnly && !item.isPersonal) {
                 return false;
             }
             const matchLevel = !level || String(level) === "all" || item.level === level;
