@@ -25,6 +25,11 @@ const vocabularySchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    phonetic: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     example: {
       type: String,
       trim: true,

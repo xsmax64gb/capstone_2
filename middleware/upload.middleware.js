@@ -45,10 +45,12 @@ const uploadPdfMulter = multer({
 });
 
 const uploadExerciseAiPdf = uploadPdfMulter.single("file_pdf");
+const uploadVocabularyAiPdf = uploadPdfMulter.single("file_pdf");
 
 export {
   uploadAvatarImage,
   uploadExerciseAiPdf,
+  uploadVocabularyAiPdf,
   uploadExerciseCoverImage,
   uploadVocabularyCoverImage,
   uploadMulter,

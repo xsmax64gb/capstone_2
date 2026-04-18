@@ -4,8 +4,13 @@ import {
   createAdminVocabulary,
   createAdminVocabularyWord,
   createAdminVocabularyWordsBulk,
+  createPersonalVocabularySetFromAi,
+  createPersonalVocabularySetManual,
   deleteAdminVocabulary,
   deleteAdminVocabularyWord,
+  deletePersonalVocabularySet,
+  generatePersonalVocabularyFromPdf,
+  generatePersonalVocabularyFromPrompt,
   getAdminVocabulary,
   getAdminVocabularyById,
   getAdminVocabularyWords,
@@ -20,10 +25,12 @@ import {
   submitVocabularyAttempt,
   updateAdminVocabulary,
   updateAdminVocabularyWord,
+  updatePersonalVocabularySet,
 } from "../controllers/index.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.middleware.js";
 import { requireFeatureQuota } from "../middleware/feature-quota.middleware.js";
 import {
+  uploadVocabularyAiPdf,
   uploadVocabularyCoverImage,
 } from "../middleware/upload.middleware.js";
 
@@ -103,6 +110,38 @@ router.get(
   "/vocabularies/history",
   requireFeatureQuota("vocabulary_library"),
   getVocabularyHistory
+);
+
+router.post(
+  "/vocabularies/personal/generate-prompt",
+  requireFeatureQuota("vocabulary_library"),
+  generatePersonalVocabularyFromPrompt
+);
+router.post(
+  "/vocabularies/personal/generate-pdf",
+  requireFeatureQuota("vocabulary_library"),
+  uploadVocabularyAiPdf,
+  generatePersonalVocabularyFromPdf
+);
+router.post(
+  "/vocabularies/personal/manual",
+  requireFeatureQuota("vocabulary_library"),
+  createPersonalVocabularySetManual
+);
+router.post(
+  "/vocabularies/personal/ai",
+  requireFeatureQuota("vocabulary_library"),
+  createPersonalVocabularySetFromAi
+);
+router.put(
+  "/vocabularies/personal/:id",
+  requireFeatureQuota("vocabulary_library"),
+  updatePersonalVocabularySet
+);
+router.delete(
+  "/vocabularies/personal/:id",
+  requireFeatureQuota("vocabulary_library"),
+  deletePersonalVocabularySet
 );
 
 router.get(

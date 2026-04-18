@@ -74,6 +74,14 @@ import {
   updateAdminVocabulary,
   updateAdminVocabularyWord,
 } from "./vocabulary.controller.js";
+import {
+  createPersonalVocabularySetFromAi,
+  createPersonalVocabularySetManual,
+  deletePersonalVocabularySet,
+  generatePersonalVocabularyFromPdf,
+  generatePersonalVocabularyFromPrompt,
+  updatePersonalVocabularySet,
+} from "./vocabulary-personal.controller.js";
 
 const healthCheck = (_req, res) => {
   res.status(200).json({
@@ -95,12 +103,15 @@ export {
   createAdminVocabulary,
   createAdminVocabularyWord,
   createAdminVocabularyWordsBulk,
+  createPersonalVocabularySetFromAi,
+  createPersonalVocabularySetManual,
   deleteAdminExercise,
   deleteUserAiExercise,
   deleteAdminPlacementTest,
   deleteAdminUser,
   deleteAdminVocabulary,
   deleteAdminVocabularyWord,
+  deletePersonalVocabularySet,
   generateExerciseAiFromPdf,
   generateExerciseAiFromPrompt,
   getActivePlacementTest,
@@ -123,6 +134,8 @@ export {
   getPlacementAttemptById,
   getRecommendedExercises,
   getRecommendedVocabularies,
+  generatePersonalVocabularyFromPdf,
+  generatePersonalVocabularyFromPrompt,
   getVocabularyById,
   getVocabularyHints,
   getVocabularyHistory,
@@ -149,4 +162,5 @@ export {
   updateAdminUserStatus,
   updateAdminVocabulary,
   updateAdminVocabularyWord,
+  updatePersonalVocabularySet,
 };
