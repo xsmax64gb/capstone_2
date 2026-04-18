@@ -35,6 +35,13 @@ import {
   updateAdminExercise,
 } from "./exercise.controller.js";
 import {
+  createUserAiExercise,
+  deleteUserAiExercise,
+  generateExerciseAiFromPdf,
+  generateExerciseAiFromPrompt,
+  updateUserAiExercise,
+} from "./exercise-ai.controller.js";
+import {
   createAdminUser,
   deleteAdminUser,
   getAdminOverview,
@@ -81,6 +88,7 @@ export {
   changePassword,
   confirmPlacementResult,
   createAdminExercise,
+  createUserAiExercise,
   createAdminPlacementTest,
   createAdminPlacementTestWithAi,
   createAdminUser,
@@ -88,10 +96,13 @@ export {
   createAdminVocabularyWord,
   createAdminVocabularyWordsBulk,
   deleteAdminExercise,
+  deleteUserAiExercise,
   deleteAdminPlacementTest,
   deleteAdminUser,
   deleteAdminVocabulary,
   deleteAdminVocabularyWord,
+  generateExerciseAiFromPdf,
+  generateExerciseAiFromPrompt,
   getActivePlacementTest,
   getAdminExercises,
   getAdminOverview,
@@ -131,6 +142,7 @@ export {
   submitPlacementTest,
   submitVocabularyAttempt,
   updateAdminExercise,
+  updateUserAiExercise,
   updateAdminPlacementTest,
   updateAdminUser,
   updateAdminUserRole,

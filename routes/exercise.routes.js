@@ -2,7 +2,11 @@ import express from "express";
 
 import {
     createAdminExercise,
+    createUserAiExercise,
     deleteAdminExercise,
+    deleteUserAiExercise,
+    generateExerciseAiFromPdf,
+    generateExerciseAiFromPrompt,
     getAdminExercises,
     getExerciseById,
     getExerciseHints,
@@ -14,10 +18,11 @@ import {
     listExercises,
     submitExerciseAttempt,
     updateAdminExercise,
+    updateUserAiExercise,
 } from "../controllers/index.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.middleware.js";
 import { requireFeatureQuota } from "../middleware/feature-quota.middleware.js";
-import { uploadExerciseCoverImage } from "../middleware/upload.middleware.js";
+import { uploadExerciseAiPdf, uploadExerciseCoverImage } from "../middleware/upload.middleware.js";
 
 const router = express.Router();
 
@@ -149,6 +154,33 @@ router.get(
     "/exercises/history",
     requireFeatureQuota("exercise_library"),
     getExerciseHistory
+);
+
+router.post(
+    "/exercises/ai/generate-prompt",
+    requireFeatureQuota("exercise_library"),
+    generateExerciseAiFromPrompt
+);
+router.post(
+    "/exercises/ai/generate-pdf",
+    requireFeatureQuota("exercise_library"),
+    uploadExerciseAiPdf,
+    generateExerciseAiFromPdf
+);
+router.post(
+    "/exercises/ai",
+    requireFeatureQuota("exercise_library"),
+    createUserAiExercise
+);
+router.put(
+    "/exercises/ai/:id",
+    requireFeatureQuota("exercise_library"),
+    updateUserAiExercise
+);
+router.delete(
+    "/exercises/ai/:id",
+    requireFeatureQuota("exercise_library"),
+    deleteUserAiExercise
 );
 
 /**

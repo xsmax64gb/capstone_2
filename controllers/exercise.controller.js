@@ -31,25 +31,71 @@ const buildCompletedExerciseIdSet = (progressDoc) =>
             .map((item) => String(item.exerciseId))
     );
 
-const annotateExercisesWithCompletion = async (items, userId) => {
+const buildPrivatePerfectExerciseIdSet = async (userId, exerciseIds) => {
     if (
-        !Array.isArray(items) ||
-        items.length === 0 ||
         !userId ||
-        !mongoose.Types.ObjectId.isValid(userId)
+        !mongoose.Types.ObjectId.isValid(userId) ||
+        !Array.isArray(exerciseIds) ||
+        exerciseIds.length === 0
     ) {
+        return new Set();
+    }
+
+    const objectIds = exerciseIds
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+
+    if (objectIds.length === 0) {
+        return new Set();
+    }
+
+    const attempts = await ExerciseAttempt.find({
+        userId,
+        exerciseRef: { $in: objectIds },
+    })
+        .select("exerciseRef score total")
+        .lean();
+
+    const done = new Set();
+    attempts.forEach((a) => {
+        const total = toSafeInt(a?.total, 0);
+        const score = toSafeInt(a?.score, 0);
+        if (total > 0 && score === total) {
+            done.add(String(a.exerciseRef));
+        }
+    });
+    return done;
+};
+
+const annotateExercisesWithCompletion = async (items, userId) => {
+    if (!Array.isArray(items) || items.length === 0) {
+        return items;
+    }
+
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
         return items;
     }
 
     const progress = await UserProgress.findOne({ userId })
         .select("exerciseProgress")
         .lean();
-    const completedIds = buildCompletedExerciseIdSet(progress);
+    const catalogCompleted = buildCompletedExerciseIdSet(progress);
 
-    return items.map((item) => ({
-        ...item,
-        isCompleted: completedIds.has(String(item.id)),
-    }));
+    const personalIds = items.filter((item) => item?.isPersonal).map((item) => item.id);
+    const privatePerfect = await buildPrivatePerfectExerciseIdSet(userId, personalIds);
+
+    return items.map((item) => {
+        if (item?.isPersonal) {
+            return {
+                ...item,
+                isCompleted: privatePerfect.has(String(item.id)),
+            };
+        }
+        return {
+            ...item,
+            isCompleted: catalogCompleted.has(String(item.id)),
+        };
+    });
 };
 
 const getOrCreateUserProgress = async (userId, currentLevel = "A1") => {
@@ -115,9 +161,15 @@ const normalizeExercise = (exercise, index = 0) => {
         exercise?.durationMinutes ||
         (questions.length > 0 ? Math.max(6, Math.round(questions.length * 1.8)) : 8);
 
+    const ownerId = exercise?.ownerId ? String(exercise.ownerId) : null;
+    const isPersonal = Boolean(ownerId);
+
     return {
         id: String(exercise?._id || `ex_${index + 1}`),
         _docId: exercise?._id ? String(exercise._id) : null,
+        ownerId,
+        isPersonal,
+        source: exercise?.source || "catalog",
         title: exercise?.title || `Exercise ${index + 1}`,
         description: exercise?.description || "",
         type: exercise?.type || "mcq",
@@ -125,7 +177,9 @@ const normalizeExercise = (exercise, index = 0) => {
         topic,
         questionCount: Number.isFinite(exercise?.questionCount) ? exercise.questionCount : questions.length,
         durationMinutes,
-        rewardsXp: toSafeInt(exercise?.rewardsXp ?? exercise?.rewards?.exp, 20),
+        rewardsXp: isPersonal
+            ? 0
+            : toSafeInt(exercise?.rewardsXp ?? exercise?.rewards?.exp, 20),
         coverImage: exercise?.coverImage || DEFAULT_COVER_IMAGES[topic] || DEFAULT_COVER_IMAGES.general,
         skills: Array.isArray(exercise?.skills) ? exercise.skills : [topic, exercise?.type || "practice"],
         questions,
@@ -294,6 +348,16 @@ const buildPublicExercise = (item) => {
     return rest;
 };
 
+const canAccessExercise = (exercise, userId) => {
+    if (!exercise?.isPersonal) {
+        return true;
+    }
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+        return false;
+    }
+    return String(exercise.ownerId) === String(userId);
+};
+
 const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -303,6 +367,7 @@ const formatDuration = (seconds) => {
 const listExercises = async (req, res) => {
     try {
         const all = await getExercises();
+        const userId = req.user?.id;
         const {
             query = "",
             level,
@@ -318,6 +383,9 @@ const listExercises = async (req, res) => {
         const limitNumber = Math.min(100, Math.max(1, toSafeInt(limit, 20)));
 
         const filtered = all.filter((item) => {
+            if (!canAccessExercise(item, userId)) {
+                return false;
+            }
             const matchLevel = !level || String(level) === "all" || item.level === level;
             const matchType = !type || String(type) === "all" || item.type === type;
             const matchTopic = !topic || String(topic) === "all" || item.topic === topic;
@@ -360,8 +428,9 @@ const listExercises = async (req, res) => {
 const getExerciseSummary = async (_req, res) => {
     try {
         const all = await getExercises();
-        const totalQuestions = all.reduce((sum, item) => sum + item.questionCount, 0);
-        const totalXp = all.reduce((sum, item) => sum + item.rewardsXp, 0);
+        const catalog = all.filter((item) => !item.isPersonal);
+        const totalQuestions = catalog.reduce((sum, item) => sum + item.questionCount, 0);
+        const totalXp = catalog.reduce((sum, item) => sum + item.rewardsXp, 0);
         const userId = _req.user?.id;
         const pastAttempts = await getUserAttemptCount(userId);
 
@@ -369,7 +438,7 @@ const getExerciseSummary = async (_req, res) => {
             success: true,
             message: "Exercise summary fetched successfully",
             data: {
-                totalExercises: all.length,
+                totalExercises: catalog.length,
                 totalQuestions,
                 totalXp,
                 pastAttempts,
@@ -414,9 +483,10 @@ const getRecommendedExercises = async (req, res) => {
             : userLevel;
         const targetLevels = [userLevel, nextLevel];
 
-        // 3. Get all exercises first
+        // 3. Catalog exercises only (exclude user AI exercises)
         const all = await getExercises();
-        const targetExercises = all.filter(ex => targetLevels.includes(ex.level));
+        const catalog = all.filter((ex) => !ex.isPersonal);
+        const targetExercises = catalog.filter((ex) => targetLevels.includes(ex.level));
 
         if (targetExercises.length === 0) {
             return res.status(200).json({
@@ -519,8 +589,20 @@ const getExerciseById = async (req, res) => {
             });
         }
 
+        if (!canAccessExercise(exercise, req.user?.id)) {
+            return res.status(403).json({
+                success: false,
+                message: "Forbidden",
+            });
+        }
+
         const related = all
-            .filter((item) => item.topic === exercise.topic && item.id !== exercise.id)
+            .filter(
+                (item) =>
+                    !item.isPersonal &&
+                    item.topic === exercise.topic &&
+                    item.id !== exercise.id
+            )
             .slice(0, 3)
             .map(buildPublicExercise);
         const [exerciseWithCompletion] = await annotateExercisesWithCompletion(
@@ -557,6 +639,13 @@ const getExerciseHints = async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message: "Exercise not found",
+            });
+        }
+
+        if (!canAccessExercise(exercise, req.user?.id)) {
+            return res.status(403).json({
+                success: false,
+                message: "Forbidden",
             });
         }
 
@@ -636,6 +725,13 @@ const getExerciseLeaderboard = async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message: "Exercise not found",
+            });
+        }
+
+        if (!canAccessExercise(exercise, req.user?.id)) {
+            return res.status(403).json({
+                success: false,
+                message: "Forbidden",
             });
         }
 
@@ -730,6 +826,13 @@ const submitExerciseAttempt = async (req, res) => {
             });
         }
 
+        if (!canAccessExercise(exercise, req.user?.id)) {
+            return res.status(403).json({
+                success: false,
+                message: "Forbidden",
+            });
+        }
+
         const bodyAnswers = Array.isArray(req.body?.answers) ? req.body.answers : [];
         const answers = bodyAnswers
             .slice(0, exercise.questions.length)
@@ -774,28 +877,48 @@ const submitExerciseAttempt = async (req, res) => {
             exercise.level,
             normalizedUserLevel
         );
-        const userProgress = await getOrCreateUserProgress(userId, normalizedUserLevel);
-        const progressIndex = userProgress.exerciseProgress.findIndex(
-            (item) => String(item.exerciseId) === String(exercise.id)
-        );
-        const existingProgress =
-            progressIndex >= 0 ? userProgress.exerciseProgress[progressIndex] : null;
-        const alreadyCompleted = Boolean(existingProgress?.passed);
+        const skipCatalogProgress = Boolean(exercise.isPersonal);
+
+        let alreadyCompleted = false;
+        let userProgress = null;
+        if (skipCatalogProgress) {
+            const priorPerfect = await ExerciseAttempt.findOne({
+                userId,
+                exerciseRef: new mongoose.Types.ObjectId(exercise.id),
+                total: { $gt: 0 },
+                $expr: { $eq: ["$score", "$total"] },
+            })
+                .select("_id")
+                .lean();
+            alreadyCompleted = Boolean(priorPerfect);
+        } else {
+            userProgress = await getOrCreateUserProgress(userId, normalizedUserLevel);
+            const progressIndex = userProgress.exerciseProgress.findIndex(
+                (item) => String(item.exerciseId) === String(exercise.id)
+            );
+            const existingProgress =
+                progressIndex >= 0 ? userProgress.exerciseProgress[progressIndex] : null;
+            alreadyCompleted = Boolean(existingProgress?.passed);
+        }
+
         const firstCompletion = perfectScore && !alreadyCompleted;
         const exerciseCompleted = alreadyCompleted || perfectScore;
-        const xpAwarded = firstCompletion && levelQualified && rewardXp > 0;
+        const xpAwarded =
+            !skipCatalogProgress && firstCompletion && levelQualified && rewardXp > 0;
         const earnedXp = xpAwarded ? rewardXp : 0;
-        const xpReason = xpAwarded
-            ? "awarded"
-            : !perfectScore
-                ? "not_perfect"
-                : alreadyCompleted
-                    ? "already_completed"
-                    : !levelQualified
-                        ? "level_not_eligible"
-                        : rewardXp <= 0
-                            ? "no_reward_configured"
-                            : "not_awarded";
+        const xpReason = skipCatalogProgress
+            ? "personal_exercise"
+            : xpAwarded
+                ? "awarded"
+                : !perfectScore
+                    ? "not_perfect"
+                    : alreadyCompleted
+                        ? "already_completed"
+                        : !levelQualified
+                            ? "level_not_eligible"
+                            : rewardXp <= 0
+                                ? "no_reward_configured"
+                                : "not_awarded";
         const resultLabel =
             percent >= 85
                 ? "Excellent"
@@ -805,31 +928,39 @@ const submitExerciseAttempt = async (req, res) => {
                         ? "Keep Going"
                         : "Needs Retry";
 
-        if (progressIndex >= 0) {
-            userProgress.exerciseProgress[progressIndex].score = Math.max(
-                toSafeInt(existingProgress?.score, 0),
-                percent
+        if (!skipCatalogProgress && userProgress) {
+            const progressIndex = userProgress.exerciseProgress.findIndex(
+                (item) => String(item.exerciseId) === String(exercise.id)
             );
-            userProgress.exerciseProgress[progressIndex].passed =
-                Boolean(existingProgress?.passed) || perfectScore;
-            userProgress.exerciseProgress[progressIndex].submittedAt = new Date();
-        } else {
-            userProgress.exerciseProgress.push({
-                exerciseId: exercise.id,
-                score: percent,
-                passed: perfectScore,
-                submittedAt: new Date(),
-            });
-        }
+            const existingProgress =
+                progressIndex >= 0 ? userProgress.exerciseProgress[progressIndex] : null;
 
-        if (userProgress.currentLevel !== normalizedUserLevel) {
-            userProgress.currentLevel = normalizedUserLevel;
-        }
+            if (progressIndex >= 0) {
+                userProgress.exerciseProgress[progressIndex].score = Math.max(
+                    toSafeInt(existingProgress?.score, 0),
+                    percent
+                );
+                userProgress.exerciseProgress[progressIndex].passed =
+                    Boolean(existingProgress?.passed) || perfectScore;
+                userProgress.exerciseProgress[progressIndex].submittedAt = new Date();
+            } else {
+                userProgress.exerciseProgress.push({
+                    exerciseId: exercise.id,
+                    score: percent,
+                    passed: perfectScore,
+                    submittedAt: new Date(),
+                });
+            }
 
-        await userProgress.save();
+            if (userProgress.currentLevel !== normalizedUserLevel) {
+                userProgress.currentLevel = normalizedUserLevel;
+            }
+
+            await userProgress.save();
+        }
 
         let updatedUserExp = toSafeInt(user.exp, 0);
-        if (xpAwarded && earnedXp > 0) {
+        if (!skipCatalogProgress && xpAwarded && earnedXp > 0) {
             await User.updateOne(
                 { _id: userId },
                 { $inc: { exp: earnedXp } }
@@ -855,7 +986,7 @@ const submitExerciseAttempt = async (req, res) => {
             submittedAt: new Date(),
         });
 
-        if (firstCompletion && xpAwarded && earnedXp > 0) {
+        if (!skipCatalogProgress && firstCompletion && xpAwarded && earnedXp > 0) {
             try {
                 await createInboxNotificationForUser(String(userId), {
                     title: "Hoàn thành xuất sắc bài tập",
@@ -909,6 +1040,13 @@ const getExerciseReview = async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message: "Exercise not found",
+            });
+        }
+
+        if (!canAccessExercise(exercise, req.user?.id)) {
+            return res.status(403).json({
+                success: false,
+                message: "Forbidden",
             });
         }
 
