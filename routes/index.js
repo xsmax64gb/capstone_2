@@ -1,6 +1,5 @@
 import express from "express";
 
-import aiRouter from "./ai.routes.js";
 import authRouter from "./auth.routes.js";
 import exerciseRouter from "./exercise.routes.js";
 import userRouter from "./user.routes.js";
@@ -34,7 +33,6 @@ const router = express.Router();
  *                       format: date-time
  */
 router.get("/health", healthCheck);
-router.use("/", aiRouter);
 router.use("/auth", authRouter);
 router.use("/", exerciseRouter);
 router.use("/", userRouter);

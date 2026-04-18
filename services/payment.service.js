@@ -69,6 +69,37 @@ const isPaymentExpired = (payment, now = new Date()) => {
     return expiresDate.getTime() <= now.getTime();
 };
 
+const parsePaymentDate = (value) => {
+    if (!value) {
+        return null;
+    }
+
+    const parsed = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const canApplyXGatePayment = (payment, { now = new Date(), transactionDate = null } = {}) => {
+    if (!payment || payment.status === "paid") {
+        return false;
+    }
+
+    const expiresAt = parsePaymentDate(payment.expiresAt);
+    const paidWithinWindow =
+        expiresAt && transactionDate && transactionDate.getTime() <= expiresAt.getTime();
+
+    if (payment.status === "pending") {
+        if (!expiresAt) {
+            return true;
+        }
+
+        return expiresAt.getTime() > now.getTime() || paidWithinWindow;
+    }
+
+    return payment.status === "failed"
+        && payment.failureReason === EXPIRED_PAYMENT_REASON
+        && Boolean(paidWithinWindow);
+};
+
 const normalizeCurrency = (value) => {
     const normalized = normalizeTrimmedString(value).toUpperCase();
     return normalized || DEFAULT_CURRENCY;
@@ -421,6 +452,7 @@ const markPaymentPaidByInvoice = async ({
     invoiceNumber,
     xgateReference,
     matchedContent,
+    transactionDate,
 }) => {
     const normalizedInvoice = normalizeTrimmedString(invoiceNumber);
     if (!normalizedInvoice) {
@@ -428,16 +460,22 @@ const markPaymentPaidByInvoice = async ({
     }
 
     const now = new Date();
+    const normalizedTransactionDate = parsePaymentDate(transactionDate);
     const payment = await Payment.findOne({
         invoiceNumber: normalizedInvoice,
-        status: "pending",
-        $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
     });
 
     if (!payment) {
-        await markPaymentExpiredByInvoice({
-            invoiceNumber: normalizedInvoice,
-        });
+        return 0;
+    }
+
+    if (!canApplyXGatePayment(payment, { now, transactionDate: normalizedTransactionDate })) {
+        if (payment.status === "pending") {
+            await markPaymentExpiredByInvoice({
+                invoiceNumber: normalizedInvoice,
+            });
+        }
+
         return 0;
     }
 
@@ -447,7 +485,7 @@ const markPaymentPaidByInvoice = async ({
         typeof matchedContent === "string" && matchedContent.length > 0
             ? matchedContent
             : null;
-    payment.paidAt = payment.paidAt || now;
+    payment.paidAt = payment.paidAt || normalizedTransactionDate || now;
     payment.syncedAt = now;
     payment.failureReason = null;
 

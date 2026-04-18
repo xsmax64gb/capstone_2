@@ -6,7 +6,6 @@ import Vocabulary from "./vocabulary.model.js";
 import VocabularyAttempt from "./vocabulary-attempt.model.js";
 import Exercise from "./exercise.model.js";
 import ExerciseAttempt from "./exercise-attempt.model.js";
-import AiLevel from "./ai-level.model.js";
 import AiSession from "./ai-session.model.js";
 import UserProgress from "./user-progress.model.js";
 import Otp from "./otp.model.js";
@@ -30,7 +29,6 @@ export {
   VocabularyAttempt,
   Exercise,
   ExerciseAttempt,
-  AiLevel,
   AiSession,
   UserProgress,
   Otp,

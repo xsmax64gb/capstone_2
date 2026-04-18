@@ -27,6 +27,48 @@ const sanitizeInvoiceToken = (value) =>
 const sanitizeTextForMatch = (value) =>
     String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
+const buildTransactionMatchCandidates = (transaction) => {
+    const candidates = [
+        transaction?.content,
+        transaction?.referenceCode,
+        transaction?.id,
+        transaction?.raw?.content,
+        transaction?.raw?.description,
+        transaction?.raw?.transferContent,
+        transaction?.raw?.transfer_content,
+        transaction?.raw?.remark,
+        transaction?.raw?.note,
+        transaction?.raw?.referenceCode,
+        transaction?.raw?.reference_code,
+        transaction?.raw?.reference,
+        transaction?.raw?.ref,
+        transaction?.raw?.code,
+        transaction?.raw?.transactionRef,
+    ];
+
+    const uniqueCandidates = [];
+    const seen = new Set();
+
+    for (const candidate of candidates) {
+        if (typeof candidate !== "string" || candidate.trim().length === 0) {
+            continue;
+        }
+
+        const normalized = sanitizeTextForMatch(candidate);
+        if (!normalized || seen.has(normalized)) {
+            continue;
+        }
+
+        seen.add(normalized);
+        uniqueCandidates.push({
+            raw: candidate,
+            normalized,
+        });
+    }
+
+    return uniqueCandidates;
+};
+
 const pruneRateWindow = () => {
     const now = Date.now();
     while (syncRequestTimestamps.length > 0) {
@@ -136,8 +178,8 @@ const runPaymentSync = async ({
 
     const matchedByInvoice = new Map();
     for (const transaction of transactions) {
-        const normalizedContent = sanitizeTextForMatch(transaction.content);
-        if (!normalizedContent) {
+        const matchCandidates = buildTransactionMatchCandidates(transaction);
+        if (matchCandidates.length === 0) {
             continue;
         }
 
@@ -146,10 +188,15 @@ const runPaymentSync = async ({
                 continue;
             }
 
-            if (normalizedContent.includes(token)) {
+            const matchedCandidate = matchCandidates.find((candidate) =>
+                candidate.normalized.includes(token)
+            );
+
+            if (matchedCandidate) {
                 matchedByInvoice.set(payment.invoiceNumber, {
                     payment,
                     transaction,
+                    matchedValue: matchedCandidate.raw,
                 });
             }
         }
@@ -160,7 +207,8 @@ const runPaymentSync = async ({
         const affected = await markPaymentPaidByInvoice({
             invoiceNumber,
             xgateReference: match.transaction.referenceCode || match.transaction.id,
-            matchedContent: match.transaction.content,
+            matchedContent: match.matchedValue,
+            transactionDate: match.transaction.transactionDate,
         });
 
         updatedPayments += affected;

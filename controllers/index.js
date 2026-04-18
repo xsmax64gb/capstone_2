@@ -6,13 +6,6 @@ import {
   sendRegisterOtp,
 } from "./auth.controller.js";
 import {
-  createAdminAiLevel,
-  deleteAdminAiLevel,
-  getAdminAiLevels,
-  updateAdminAiLevel,
-  uploadAdminImage,
-} from "./ai.controller.js";
-import {
   activateAdminPlacementTest,
   confirmPlacementResult,
   createAdminPlacementTest,
@@ -87,7 +80,6 @@ export {
   activateAdminPlacementTest,
   changePassword,
   confirmPlacementResult,
-  createAdminAiLevel,
   createAdminExercise,
   createAdminPlacementTest,
   createAdminPlacementTestWithAi,
@@ -95,14 +87,12 @@ export {
   createAdminVocabulary,
   createAdminVocabularyWord,
   createAdminVocabularyWordsBulk,
-  deleteAdminAiLevel,
   deleteAdminExercise,
   deleteAdminPlacementTest,
   deleteAdminUser,
   deleteAdminVocabulary,
   deleteAdminVocabularyWord,
   getActivePlacementTest,
-  getAdminAiLevels,
   getAdminExercises,
   getAdminOverview,
   getAdminPlacementTestById,
@@ -140,7 +130,6 @@ export {
   submitExerciseAttempt,
   submitPlacementTest,
   submitVocabularyAttempt,
-  updateAdminAiLevel,
   updateAdminExercise,
   updateAdminPlacementTest,
   updateAdminUser,
@@ -148,5 +137,4 @@ export {
   updateAdminUserStatus,
   updateAdminVocabulary,
   updateAdminVocabularyWord,
-  uploadAdminImage,
 };

@@ -5,6 +5,7 @@ const DEFAULT_RANGE_DAYS = 30;
 const MIN_RANGE_DAYS = 1;
 const MAX_RANGE_DAYS = 365;
 const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const toIsoDate = (value) => {
     if (!value) {
@@ -19,29 +20,87 @@ const toIsoDate = (value) => {
     return date.toISOString();
 };
 
-const parseDate = (value) => {
-    if (!value) {
+const getFormatterParts = (date, timezone) => {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+    });
+
+    return formatter.formatToParts(date).reduce((accumulator, part) => {
+        if (part.type !== "literal") {
+            accumulator[part.type] = part.value;
+        }
+
+        return accumulator;
+    }, {});
+};
+
+const formatDateKeyInTimezone = (date, timezone) => {
+    const parts = getFormatterParts(date, timezone);
+    return `${parts.year}-${parts.month}-${parts.day}`;
+};
+
+const toUtcDateFromDateKey = (dateKey) => {
+    const [year, month, day] = dateKey.split("-").map((value) => Number(value));
+    return new Date(Date.UTC(year, month - 1, day));
+};
+
+const addDaysToDateKey = (dateKey, days) => {
+    const nextDate = toUtcDateFromDateKey(dateKey);
+    nextDate.setUTCDate(nextDate.getUTCDate() + days);
+    return nextDate.toISOString().slice(0, 10);
+};
+
+const getTimezoneOffsetMs = (date, timezone) => {
+    const parts = getFormatterParts(date, timezone);
+    const utcTimestamp = Date.UTC(
+        Number(parts.year),
+        Number(parts.month) - 1,
+        Number(parts.day),
+        Number(parts.hour),
+        Number(parts.minute),
+        Number(parts.second)
+    );
+
+    return utcTimestamp - date.getTime();
+};
+
+const getUtcStartOfDateKey = (dateKey, timezone) => {
+    const [year, month, day] = dateKey.split("-").map((value) => Number(value));
+    const utcGuess = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    return new Date(utcGuess.getTime() - getTimezoneOffsetMs(utcGuess, timezone));
+};
+
+const getUtcEndOfDateKey = (dateKey, timezone) =>
+    new Date(getUtcStartOfDateKey(addDaysToDateKey(dateKey, 1), timezone).getTime() - 1);
+
+const normalizeDateInputToKey = (value, timezone) => {
+    const normalized = String(value ?? "").trim();
+    if (!normalized) {
         return null;
     }
 
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
+    if (DATE_KEY_PATTERN.test(normalized)) {
+        return normalized;
+    }
+
+    const parsedDate = new Date(normalized);
+    if (Number.isNaN(parsedDate.getTime())) {
         return null;
     }
 
-    return date;
+    return formatDateKeyInTimezone(parsedDate, timezone);
 };
 
-const startOfDay = (date) => {
-    const result = new Date(date);
-    result.setHours(0, 0, 0, 0);
-    return result;
-};
-
-const endOfDay = (date) => {
-    const result = new Date(date);
-    result.setHours(23, 59, 59, 999);
-    return result;
+const formatChartLabelFromDateKey = (dateKey) => {
+    const [, month, day] = dateKey.split("-");
+    return `${day}-${month}`;
 };
 
 const sanitizeRangeDays = (value) => {
@@ -55,18 +114,22 @@ const sanitizeRangeDays = (value) => {
 };
 
 const resolveDateRange = (filters = {}) => {
-    const fromInput = parseDate(filters.from ?? filters.startDate);
-    const toInput = parseDate(filters.to ?? filters.endDate);
+    const timezone = process.env.REVENUE_TIMEZONE || DEFAULT_TIMEZONE;
+    const fromDateKey = normalizeDateInputToKey(filters.from ?? filters.startDate, timezone);
+    const toDateKey = normalizeDateInputToKey(filters.to ?? filters.endDate, timezone);
 
-    if (fromInput && toInput && fromInput.getTime() <= toInput.getTime()) {
-        const from = startOfDay(fromInput);
-        const to = endOfDay(toInput);
+    if (fromDateKey && toDateKey && fromDateKey <= toDateKey) {
+        const from = getUtcStartOfDateKey(fromDateKey, timezone);
+        const to = getUtcEndOfDateKey(toDateKey, timezone);
 
         return {
             from,
             to,
+            fromDateKey,
+            toDateKey,
             label: "custom",
             rangeDays: Math.max(1, Math.ceil((to.getTime() - from.getTime() + 1) / DAY_MS)),
+            timezone,
         };
     }
 
@@ -76,15 +139,19 @@ const resolveDateRange = (filters = {}) => {
         ? sanitizeRangeDays(Number(matchedRange[1]))
         : sanitizeRangeDays(filters.rangeDays);
 
-    const now = new Date();
-    const to = endOfDay(now);
-    const from = startOfDay(new Date(to.getTime() - (rangeDays - 1) * DAY_MS));
+    const toDateKeyResolved = formatDateKeyInTimezone(new Date(), timezone);
+    const fromDateKeyResolved = addDaysToDateKey(toDateKeyResolved, -(rangeDays - 1));
+    const from = getUtcStartOfDateKey(fromDateKeyResolved, timezone);
+    const to = getUtcEndOfDateKey(toDateKeyResolved, timezone);
 
     return {
         from,
         to,
+        fromDateKey: fromDateKeyResolved,
+        toDateKey: toDateKeyResolved,
         label: `${rangeDays}d`,
         rangeDays,
+        timezone,
     };
 };
 
@@ -176,7 +243,7 @@ const getRevenueOverview = async (filters = {}) => {
 
 const getRevenueChartData = async (filters = {}) => {
     const range = resolveDateRange(filters);
-    const timezone = process.env.REVENUE_TIMEZONE || DEFAULT_TIMEZONE;
+    const timezone = range.timezone;
 
     const grouped = await Payment.aggregate([
         {
@@ -214,29 +281,15 @@ const getRevenueChartData = async (filters = {}) => {
         ])
     );
 
-    const keyFormatter = new Intl.DateTimeFormat("en-CA", {
-        timeZone: timezone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-    });
-
-    const labelFormatter = new Intl.DateTimeFormat("vi-VN", {
-        timeZone: timezone,
-        month: "2-digit",
-        day: "2-digit",
-    });
-
     const points = [];
     let totalRevenue = 0;
     let totalPaidTransactions = 0;
 
     for (
-        let cursor = new Date(range.from);
-        cursor.getTime() <= range.to.getTime();
-        cursor = new Date(cursor.getTime() + DAY_MS)
+        let dateKey = range.fromDateKey;
+        dateKey <= range.toDateKey;
+        dateKey = addDaysToDateKey(dateKey, 1)
     ) {
-        const dateKey = keyFormatter.format(cursor);
         const groupedPoint = groupedMap.get(dateKey);
 
         const revenue = groupedPoint?.revenue ?? 0;
@@ -247,7 +300,7 @@ const getRevenueChartData = async (filters = {}) => {
 
         points.push({
             date: dateKey,
-            label: labelFormatter.format(cursor),
+            label: formatChartLabelFromDateKey(dateKey),
             revenue,
             paidTransactions,
         });
