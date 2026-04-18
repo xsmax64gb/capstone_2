@@ -1038,6 +1038,12 @@ const getVocabularyHistory = async (req, res) => {
   }
 };
 
+const normalizeVocabMeaning = (value) =>
+  String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+
 const submitVocabularyAttempt = async (req, res) => {
   try {
     const { VocabularyAttempt: VA, VocabularySet: VS } = mongoose.models;
@@ -1046,7 +1052,13 @@ const submitVocabularyAttempt = async (req, res) => {
       return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
-    const { mode, answers = [], durationSec = 0, wordIds = [] } = req.body || {};
+    const {
+      mode,
+      answers = [],
+      durationSec = 0,
+      wordIds = [],
+      selectedLabels = [],
+    } = req.body || {};
 
     if (!["flashcards", "quiz"].includes(mode)) {
       return res.status(400).json({
@@ -1064,19 +1076,75 @@ const submitVocabularyAttempt = async (req, res) => {
     }
 
     const words = await Vocabulary.find({ setId: set._id }).lean();
-    const total = words.length;
     let score = 0;
+    let total = 0;
 
     if (mode === "flashcards") {
+      total = words.length;
       score = answers.filter((a) => a && a.correct).length;
     } else {
-      score = answers.filter((a, i) => {
-        const wordId = wordIds[i];
+      const labels = Array.isArray(selectedLabels) ? selectedLabels : [];
+      const rows = wordIds.map((wordId, i) => {
         const word = words.find((w) => String(w._id) === String(wordId));
-        if (!word) return false;
-        const correctIndex = wordIds[i];
-        return a === correctIndex;
-      }).length;
+        const selectedIdx = answers[i];
+        const rawLabel = labels[i];
+        const selectedText =
+          rawLabel !== undefined && rawLabel !== null && rawLabel !== ""
+            ? String(rawLabel)
+            : "";
+        const meaningNorm = word ? normalizeVocabMeaning(word.meaning) : "";
+        const selectedNorm = normalizeVocabMeaning(selectedText);
+        const correct =
+          Boolean(word) &&
+          selectedText.length > 0 &&
+          meaningNorm.length > 0 &&
+          selectedNorm === meaningNorm;
+
+        return {
+          wordId: new mongoose.Types.ObjectId(wordId),
+          selectedIndex: selectedIdx ?? null,
+          selectedText,
+          correct,
+        };
+      });
+
+      total = Math.max(rows.length, 1);
+      score = rows.filter((r) => r.correct).length;
+
+      const percent = Math.round((score / total) * 100);
+      const earnedXp = Math.round(score * 2);
+      const resultLabel =
+        percent >= 90 ? "Excellent!" :
+          percent >= 70 ? "Good job!" :
+            percent >= 50 ? "Keep going!" :
+              "Needs more practice";
+
+      const attempt = await VA.create({
+        setId: set._id,
+        userId: new mongoose.Types.ObjectId(userId),
+        userName: req.user?.name || "",
+        mode,
+        answers: rows,
+        score,
+        total,
+        percent,
+        durationSec: Math.max(0, parseInt(durationSec, 10) || 0),
+        earnedXp,
+      });
+
+      return res.status(201).json({
+        success: true,
+        data: {
+          attemptId: String(attempt._id),
+          score,
+          total,
+          percent,
+          time: attempt.durationSec,
+          earnedXp,
+          resultLabel,
+          answers,
+        },
+      });
     }
 
     const percent = total > 0 ? Math.round((score / total) * 100) : 0;
@@ -1092,11 +1160,15 @@ const submitVocabularyAttempt = async (req, res) => {
       userId: new mongoose.Types.ObjectId(userId),
       userName: req.user?.name || "",
       mode,
-      answers: answers.map((a, i) => ({
-        wordId: wordIds[i] || null,
-        selectedIndex: a ?? null,
-        correct: false,
-      })),
+      answers: answers.map((a, i) => {
+        const rawWordId = wordIds[i] ?? words[i]?._id;
+        return {
+          wordId: new mongoose.Types.ObjectId(rawWordId),
+          selectedIndex: null,
+          selectedText: "",
+          correct: !!(a && a.correct),
+        };
+      }),
       score,
       total,
       percent,

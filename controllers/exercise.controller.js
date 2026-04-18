@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 
-import { Exercise, ExerciseAttempt, User } from "../models/index.js";
+import { Exercise, ExerciseAttempt, User, UserProgress } from "../models/index.js";
+import { createInboxNotificationForUser } from "../services/inbox-notification.service.js";
 import {
     DEFAULT_COVER_IMAGES,
     GENERIC_HINTS,
@@ -10,6 +11,76 @@ import { uploadImageFile } from "../helper/upload.helper.js";
 const toSafeInt = (value, fallback = 0) => {
     const parsed = Number.parseInt(String(value ?? ""), 10);
     return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const LEVEL_ORDER = ["A1", "A2", "B1", "B2", "C1", "C2"];
+
+const getLevelOrderIndex = (level) => {
+    const normalizedLevel = String(level || "A1").trim().toUpperCase();
+    const index = LEVEL_ORDER.indexOf(normalizedLevel);
+    return index >= 0 ? index : 0;
+};
+
+const isExerciseEligibleForXp = (exerciseLevel, userLevel) =>
+    getLevelOrderIndex(exerciseLevel) >= getLevelOrderIndex(userLevel);
+
+const buildCompletedExerciseIdSet = (progressDoc) =>
+    new Set(
+        (progressDoc?.exerciseProgress ?? [])
+            .filter((item) => item?.passed && item?.exerciseId)
+            .map((item) => String(item.exerciseId))
+    );
+
+const annotateExercisesWithCompletion = async (items, userId) => {
+    if (
+        !Array.isArray(items) ||
+        items.length === 0 ||
+        !userId ||
+        !mongoose.Types.ObjectId.isValid(userId)
+    ) {
+        return items;
+    }
+
+    const progress = await UserProgress.findOne({ userId })
+        .select("exerciseProgress")
+        .lean();
+    const completedIds = buildCompletedExerciseIdSet(progress);
+
+    return items.map((item) => ({
+        ...item,
+        isCompleted: completedIds.has(String(item.id)),
+    }));
+};
+
+const getOrCreateUserProgress = async (userId, currentLevel = "A1") => {
+    const normalizedLevel = LEVEL_ORDER.includes(currentLevel) ? currentLevel : "A1";
+    let progress = await UserProgress.findOne({ userId });
+
+    if (!progress) {
+        progress = await UserProgress.create({
+            userId,
+            currentLevel: normalizedLevel,
+            unlockedLevels: [normalizedLevel],
+        });
+    }
+
+    return progress;
+};
+
+const inferAttemptXpReason = (attempt) => {
+    if (attempt?.xpReason) {
+        return attempt.xpReason;
+    }
+
+    const total = toSafeInt(attempt?.total, 0);
+    const score = toSafeInt(attempt?.score, 0);
+    const perfectScore = total > 0 && score === total;
+
+    if (!perfectScore) {
+        return "not_perfect";
+    }
+
+    return Number(attempt?.earnedXp || 0) > 0 ? "awarded" : "already_completed";
 };
 
 const normalizeQuestion = (question, index) => {
@@ -261,12 +332,15 @@ const listExercises = async (req, res) => {
 
         const start = (pageNumber - 1) * limitNumber;
         const rows = filtered.slice(start, start + limitNumber);
+        const responseItems =
+            includeQuestions === "true" ? rows : rows.map(buildPublicExercise);
+        const items = await annotateExercisesWithCompletion(responseItems, req.user?.id);
 
         return res.status(200).json({
             success: true,
             message: "Exercises fetched successfully",
             data: {
-                items: includeQuestions === "true" ? rows : rows.map(buildPublicExercise),
+                items,
                 pagination: {
                     page: pageNumber,
                     limit: limitNumber,
@@ -414,7 +488,10 @@ const getRecommendedExercises = async (req, res) => {
             recommendations.push(...masteredExercises.slice(0, masteredCount));
         }
 
-        const items = recommendations.map(buildPublicExercise);
+        const items = await annotateExercisesWithCompletion(
+            recommendations.map(buildPublicExercise),
+            userId
+        );
 
         return res.status(200).json({
             success: true,
@@ -446,13 +523,21 @@ const getExerciseById = async (req, res) => {
             .filter((item) => item.topic === exercise.topic && item.id !== exercise.id)
             .slice(0, 3)
             .map(buildPublicExercise);
+        const [exerciseWithCompletion] = await annotateExercisesWithCompletion(
+            [exercise],
+            req.user?.id
+        );
+        const relatedWithCompletion = await annotateExercisesWithCompletion(
+            related,
+            req.user?.id
+        );
 
         return res.status(200).json({
             success: true,
             message: "Exercise detail fetched successfully",
             data: {
-                exercise,
-                related,
+                exercise: exerciseWithCompletion,
+                related: relatedWithCompletion,
             },
         });
     } catch (error) {
@@ -598,6 +683,21 @@ const getExerciseHistory = async (req, res) => {
                 score: attempt.score,
                 total: attempt.total,
                 durationSec: attempt.durationSec,
+                earnedXp: attempt.earnedXp ?? 0,
+                perfectScore:
+                    typeof attempt.perfectScore === "boolean"
+                        ? attempt.perfectScore
+                        : attempt.total > 0 && attempt.score === attempt.total,
+                xpAwarded:
+                    typeof attempt.xpAwarded === "boolean"
+                        ? attempt.xpAwarded
+                        : Number(attempt.earnedXp ?? 0) > 0,
+                xpReason: inferAttemptXpReason(attempt),
+                exerciseCompleted:
+                    typeof attempt.exerciseCompleted === "boolean"
+                        ? attempt.exerciseCompleted
+                        : attempt.total > 0 && attempt.score === attempt.total,
+                firstCompletion: Boolean(attempt.firstCompletion),
                 userName: attempt.userName,
                 answers: attempt.answers,
                 exercise: buildPublicExercise(exerciseMap.get(String(attempt.exerciseRef)) || {}),
@@ -650,6 +750,14 @@ const submitExerciseAttempt = async (req, res) => {
             });
         }
 
+        const user = await User.findById(userId).select("currentLevel exp");
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found",
+            });
+        }
+
         let score = 0;
         exercise.questions.forEach((question, index) => {
             if (answers[index] === question.correctIndex) {
@@ -659,7 +767,35 @@ const submitExerciseAttempt = async (req, res) => {
 
         const total = exercise.questions.length;
         const percent = total > 0 ? Math.round((score / total) * 100) : 0;
-        const earnedXp = Math.round((Math.max(0, Math.min(100, percent)) / 100) * exercise.rewardsXp);
+        const normalizedUserLevel = user.currentLevel || "A1";
+        const rewardXp = Math.max(0, toSafeInt(exercise.rewardsXp, 0));
+        const perfectScore = total > 0 && score === total;
+        const levelQualified = isExerciseEligibleForXp(
+            exercise.level,
+            normalizedUserLevel
+        );
+        const userProgress = await getOrCreateUserProgress(userId, normalizedUserLevel);
+        const progressIndex = userProgress.exerciseProgress.findIndex(
+            (item) => String(item.exerciseId) === String(exercise.id)
+        );
+        const existingProgress =
+            progressIndex >= 0 ? userProgress.exerciseProgress[progressIndex] : null;
+        const alreadyCompleted = Boolean(existingProgress?.passed);
+        const firstCompletion = perfectScore && !alreadyCompleted;
+        const exerciseCompleted = alreadyCompleted || perfectScore;
+        const xpAwarded = firstCompletion && levelQualified && rewardXp > 0;
+        const earnedXp = xpAwarded ? rewardXp : 0;
+        const xpReason = xpAwarded
+            ? "awarded"
+            : !perfectScore
+                ? "not_perfect"
+                : alreadyCompleted
+                    ? "already_completed"
+                    : !levelQualified
+                        ? "level_not_eligible"
+                        : rewardXp <= 0
+                            ? "no_reward_configured"
+                            : "not_awarded";
         const resultLabel =
             percent >= 85
                 ? "Excellent"
@@ -668,6 +804,38 @@ const submitExerciseAttempt = async (req, res) => {
                     : percent >= 50
                         ? "Keep Going"
                         : "Needs Retry";
+
+        if (progressIndex >= 0) {
+            userProgress.exerciseProgress[progressIndex].score = Math.max(
+                toSafeInt(existingProgress?.score, 0),
+                percent
+            );
+            userProgress.exerciseProgress[progressIndex].passed =
+                Boolean(existingProgress?.passed) || perfectScore;
+            userProgress.exerciseProgress[progressIndex].submittedAt = new Date();
+        } else {
+            userProgress.exerciseProgress.push({
+                exerciseId: exercise.id,
+                score: percent,
+                passed: perfectScore,
+                submittedAt: new Date(),
+            });
+        }
+
+        if (userProgress.currentLevel !== normalizedUserLevel) {
+            userProgress.currentLevel = normalizedUserLevel;
+        }
+
+        await userProgress.save();
+
+        let updatedUserExp = toSafeInt(user.exp, 0);
+        if (xpAwarded && earnedXp > 0) {
+            await User.updateOne(
+                { _id: userId },
+                { $inc: { exp: earnedXp } }
+            );
+            updatedUserExp += earnedXp;
+        }
 
         const attempt = await ExerciseAttempt.create({
             exerciseRef: exercise.id,
@@ -679,8 +847,29 @@ const submitExerciseAttempt = async (req, res) => {
             percent,
             durationSec,
             earnedXp,
+            perfectScore,
+            xpAwarded,
+            xpReason,
+            exerciseCompleted,
+            firstCompletion,
             submittedAt: new Date(),
         });
+
+        if (firstCompletion && xpAwarded && earnedXp > 0) {
+            try {
+                await createInboxNotificationForUser(String(userId), {
+                    title: "Hoàn thành xuất sắc bài tập",
+                    body: `Lần đầu đạt điểm tối đa tại "${exercise.title}" — bạn nhận +${earnedXp} XP.`,
+                    category: "milestone",
+                    meta: {
+                        kind: "exercise_first_perfect",
+                        exerciseId: String(exercise.id),
+                    },
+                });
+            } catch (err) {
+                console.error("[Inbox] exercise milestone", err?.message || err);
+            }
+        }
 
         return res.status(201).json({
             success: true,
@@ -692,6 +881,12 @@ const submitExerciseAttempt = async (req, res) => {
                 percent,
                 time: durationSec,
                 earnedXp,
+                perfectScore,
+                xpAwarded,
+                xpReason,
+                exerciseCompleted,
+                firstCompletion,
+                userExp: updatedUserExp,
                 resultLabel,
                 answers,
             },

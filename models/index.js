@@ -19,6 +19,7 @@ import LearnAchievement from "./learn-achievement.model.js";
 import UserLearnAchievement from "./user-learn-achievement.model.js";
 import Payment from "./payment.model.js";
 import PaymentPricing from "./payment-pricing.model.js";
+import InboxNotification from "./inbox-notification.model.js";
 
 export {
   User,
@@ -42,4 +43,5 @@ export {
   UserLearnAchievement,
   Payment,
   PaymentPricing,
+  InboxNotification,
 };

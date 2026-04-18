@@ -20,6 +20,7 @@ import {
   unlockNextMapInLevelOrder,
   unlockMapsAfterPrerequisiteCompleted,
 } from "./learn-map-progress.service.js";
+import { createInboxNotificationForUser } from "./inbox-notification.service.js";
 import { tryGrantFirstBossWin } from "./learn-achievement.service.js";
 import {
   getMapRequiredXP,
@@ -522,6 +523,8 @@ export async function endConversation(userId, conversationId) {
   const requiredMapXP = getMapRequiredXP(map);
 
   if (passed && isCurrentProgressStep) {
+    const mapStatusBefore = progress.status;
+
     if (xpEarned > 0) {
       progress.totalXPEarned = (progress.totalXPEarned || 0) + xpEarned;
     }
@@ -555,6 +558,23 @@ export async function endConversation(userId, conversationId) {
     }
 
     await progress.save();
+
+    if (
+      progress.status === "completed" &&
+      mapStatusBefore !== "completed" &&
+      map?.title
+    ) {
+      try {
+        await createInboxNotificationForUser(String(userId), {
+          title: "Hoàn thành lộ trình học",
+          body: `Bạn đã hoàn thành bản đồ "${map.title}". Tiếp tục chinh phục thử thách tiếp theo!`,
+          category: "milestone",
+          meta: { kind: "learn_map_completed", mapId: String(map._id) },
+        });
+      } catch (err) {
+        console.error("[Inbox] map completed", err?.message || err);
+      }
+    }
 
     if (step.type === "boss" && bossWin) {
       await tryGrantFirstBossWin(userId);

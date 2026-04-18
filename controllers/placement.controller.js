@@ -10,6 +10,7 @@ import { sanitizeUser } from "../helper/auth.helper.js";
 import { postOpenAiChatCompletion } from "../helper/openai.helper.js";
 import { uploadBufferToCloudinary } from "../helper/upload.helper.js";
 import { LEVELS, PLACEMENT_SKILL_TYPES } from "../models/constants.js";
+import { createInboxNotificationForUser } from "../services/inbox-notification.service.js";
 
 const DEFAULT_LEVEL = "A1";
 const DEFAULT_SKILL = "grammar";
@@ -805,6 +806,17 @@ const applyPlacementForUser = async ({
   user.placementScore = Math.max(0, Math.round(toFiniteNumber(placementScore, 0)));
   user.placementCompletedAt = new Date();
   await user.save();
+
+  try {
+    await createInboxNotificationForUser(String(userId), {
+      title: "Trình độ đã được cập nhật",
+      body: `Chúc mừng! Hệ thống ghi nhận trình độ ${normalizedLevel} sau bài đánh giá đầu vào.`,
+      category: "milestone",
+      meta: { kind: "placement_level", level: normalizedLevel },
+    });
+  } catch (err) {
+    console.error("[Inbox] placement milestone", err?.message || err);
+  }
 
   await UserProgress.findOneAndUpdate(
     { userId },

@@ -55,6 +55,27 @@ const exerciseAttemptSchema = new mongoose.Schema(
             min: 0,
             default: 0,
         },
+        perfectScore: {
+            type: Boolean,
+            default: false,
+        },
+        xpAwarded: {
+            type: Boolean,
+            default: false,
+        },
+        xpReason: {
+            type: String,
+            trim: true,
+            default: "not_perfect",
+        },
+        exerciseCompleted: {
+            type: Boolean,
+            default: false,
+        },
+        firstCompletion: {
+            type: Boolean,
+            default: false,
+        },
         submittedAt: {
             type: Date,
             default: Date.now,
