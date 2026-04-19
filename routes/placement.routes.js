@@ -10,6 +10,7 @@ import {
   getAdminPlacementTestById,
   getAdminPlacementTests,
   getPlacementAttemptById,
+  regenerateAdminPlacementQuestionAudio,
   skipPlacementTest,
   submitPlacementTest,
   updateAdminPlacementTest,
@@ -42,6 +43,12 @@ router.put(
   requireAuth,
   requireAdmin,
   updateAdminPlacementTest
+);
+router.post(
+  "/admin/placement-tests/:id/questions/:questionId/regenerate-audio",
+  requireAuth,
+  requireAdmin,
+  regenerateAdminPlacementQuestionAudio
 );
 router.patch(
   "/admin/placement-tests/:id/activate",

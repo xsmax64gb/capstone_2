@@ -79,6 +79,14 @@ const getLevelsUpTo = (level) => LEVELS.slice(0, getLevelIndex(level) + 1);
 
 const getLevelsAtOrBelow = (level) => [...getLevelsUpTo(level)].reverse();
 
+const getLevelsInRange = (levelFrom, levelTo) => {
+  const fromIndex = getLevelIndex(levelFrom);
+  const toIndex = getLevelIndex(levelTo);
+  const start = Math.min(fromIndex, toIndex);
+  const end = Math.max(fromIndex, toIndex);
+  return LEVELS.slice(start, end + 1);
+};
+
 const calculateMaxScore = (questions) =>
   questions
     .filter((question) => question.isActive)
@@ -128,6 +136,8 @@ const serializePlacementTestForAdmin = (test) => {
   return {
     id: String(test._id),
     title: test.title || "",
+    levelFrom: test.levelFrom || DEFAULT_LEVEL,
+    levelTo: test.levelTo || LEVELS[LEVELS.length - 1] || DEFAULT_LEVEL,
     description: test.description || "",
     instructions: test.instructions || "",
     durationMinutes: test.durationMinutes ?? 10,
@@ -146,6 +156,8 @@ const serializePlacementDraftForAdmin = (draft) =>
   serializePlacementTestForAdmin({
     _id: draft.id || createNestedId("placement-draft"),
     title: draft.title || "",
+    levelFrom: draft.levelFrom || DEFAULT_LEVEL,
+    levelTo: draft.levelTo || LEVELS[LEVELS.length - 1] || DEFAULT_LEVEL,
     description: draft.description || "",
     instructions: draft.instructions || "",
     durationMinutes: draft.durationMinutes ?? 10,
@@ -307,15 +319,15 @@ const normalizePlacementTestPayload = (payload = {}) => {
     throw new Error("Cần ít nhất 1 câu hỏi active để chấm placement test.");
   }
 
-  const levelRules = Array.isArray(payload.levelRules)
+  const levelFrom = ensureLevel(payload.levelFrom || DEFAULT_LEVEL);
+  const levelTo = ensureLevel(payload.levelTo || (LEVELS[LEVELS.length - 1] || DEFAULT_LEVEL));
+  const autoRules = Boolean(payload.autoRules) || !Array.isArray(payload.levelRules);
+
+  const levelRules = !autoRules
     ? payload.levelRules
         .map((rule, index) => normalizeLevelRulePayload(rule, index))
         .sort((a, b) => a.minScore - b.minScore)
-    : [];
-
-  if (!levelRules.length) {
-    throw new Error("Cần cấu hình ít nhất 1 rule chấm điểm.");
-  }
+    : buildLevelRulesFromQuestions(activeQuestions, { levelFrom, levelTo });
 
   const seenLevels = new Set();
 
@@ -353,6 +365,8 @@ const normalizePlacementTestPayload = (payload = {}) => {
 
   return {
     title,
+    levelFrom,
+    levelTo,
     description: normalizeString(payload.description),
     instructions: normalizeString(payload.instructions),
     durationMinutes: Math.max(1, toFiniteNumber(payload.durationMinutes, 10)),
@@ -484,35 +498,62 @@ Rules:
   const userPrompt = `Create a placement test question set.
 Title: ${input.title}
 Context: ${input.context}
+Level range: ${input.levelFrom} -> ${input.levelTo}
+Required counts: listening=${input.listeningQuestions}, reading=${input.readingQuestions}, grammar=${input.grammarQuestions}, vocab=${input.vocabQuestions}
 Description hint: ${input.description || "(auto)"}
 Instruction hint: ${input.instructions || "(auto)"}
 Duration minutes: ${input.durationMinutes}`;
 
-  const response = await postOpenAiChatCompletion({
-    apiKey,
-    body: {
-      model: DEFAULT_AI_MODEL,
-      temperature: 0.4,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-    },
-    errorMessagePrefix: "OpenAI generate failed",
-    maxErrorLength: 300,
-  });
+  const runOnce = async (temperature, extraInstruction = "") => {
+    const response = await postOpenAiChatCompletion({
+      apiKey,
+      body: {
+        model: DEFAULT_AI_MODEL,
+        temperature,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: extraInstruction
+              ? `${userPrompt}\n\n${extraInstruction}`
+              : userPrompt,
+          },
+        ],
+      },
+      errorMessagePrefix: "OpenAI generate failed",
+      maxErrorLength: 300,
+    });
 
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content;
 
-  if (typeof content !== "string") {
-    throw new Error("OpenAI returned invalid generate response.");
-  }
+    if (typeof content !== "string") {
+      throw new Error("OpenAI returned invalid generate response.");
+    }
 
-  const parsed = JSON.parse(content);
-  if (!Array.isArray(parsed?.questions)) {
-    throw new Error("OpenAI response does not contain questions array.");
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (error) {
+      throw new Error(`OpenAI returned invalid JSON: ${error?.message || "parse_error"}`);
+    }
+
+    if (!Array.isArray(parsed?.questions)) {
+      throw new Error("OpenAI response does not contain questions array.");
+    }
+
+    return parsed;
+  };
+
+  let parsed;
+  try {
+    parsed = await runOnce(0.4);
+  } catch {
+    parsed = await runOnce(
+      0.2,
+      'IMPORTANT: Return STRICT JSON only. No markdown, no code fences, no trailing commas. Ensure "questions" is a JSON array.'
+    );
   }
 
   return {
@@ -522,14 +563,18 @@ Duration minutes: ${input.durationMinutes}`;
   };
 };
 
-const buildLevelRulesFromQuestions = (questions) => {
+const buildLevelRulesFromQuestions = (
+  questions,
+  { levelFrom = DEFAULT_LEVEL, levelTo = LEVELS[LEVELS.length - 1] || DEFAULT_LEVEL } = {}
+) => {
+  const levels = getLevelsInRange(ensureLevel(levelFrom), ensureLevel(levelTo));
   const maxScore = calculateMaxScore(questions);
-  const step = Math.max(1, Math.floor((maxScore + 1) / LEVELS.length));
+  const step = Math.max(1, Math.floor((maxScore + 1) / levels.length));
 
-  return LEVELS.map((level, index) => {
+  return levels.map((level, index) => {
     const minScore = index === 0 ? 0 : index * step;
     const maxScoreForLevel =
-      index === LEVELS.length - 1 ? maxScore : Math.min(maxScore, (index + 1) * step - 1);
+      index === levels.length - 1 ? maxScore : Math.min(maxScore, (index + 1) * step - 1);
 
     return {
       id: createNestedId("placement-rule"),
@@ -590,35 +635,48 @@ const generateSpeechBuffer = async (text) => {
 
 const enrichListeningQuestionsWithAudio = async (questions) => {
   const nextQuestions = [];
+  const concurrency = 3;
+  let cursor = 0;
 
-  for (const question of questions) {
-    if (!shouldGenerateListeningAudio(question)) {
-      nextQuestions.push(question);
-      continue;
+  const workers = Array.from({ length: concurrency }).map(async () => {
+    while (cursor < questions.length) {
+      const index = cursor;
+      cursor += 1;
+      const question = questions[index];
+
+      if (!shouldGenerateListeningAudio(question)) {
+        nextQuestions[index] = question;
+        continue;
+      }
+
+      const ttsText = normalizeString(question.passage) || normalizeString(question.prompt);
+
+      if (!ttsText) {
+        nextQuestions[index] = question;
+        continue;
+      }
+
+      try {
+        const audioBuffer = await generateSpeechBuffer(ttsText);
+        const uploadResult = await uploadBufferToCloudinary(audioBuffer, {
+          folder: "placement-tests/listening-audio",
+          publicId: `placement-${question.id}-${Date.now()}`,
+          resourceType: "video",
+          tags: ["placement-test", "listening", "tts"],
+        });
+
+        nextQuestions[index] = {
+          ...question,
+          audioUrl: uploadResult.secure_url || uploadResult.url || "",
+        };
+      } catch {
+        nextQuestions[index] = question;
+      }
     }
+  });
 
-    const ttsText = normalizeString(question.passage) || normalizeString(question.prompt);
-
-    if (!ttsText) {
-      nextQuestions.push(question);
-      continue;
-    }
-
-    const audioBuffer = await generateSpeechBuffer(ttsText);
-    const uploadResult = await uploadBufferToCloudinary(audioBuffer, {
-      folder: "placement-tests/listening-audio",
-      publicId: `placement-${question.id}-${Date.now()}`,
-      resourceType: "video",
-      tags: ["placement-test", "listening", "tts"],
-    });
-
-    nextQuestions.push({
-      ...question,
-      audioUrl: uploadResult.secure_url || uploadResult.url || "",
-    });
-  }
-
-  return nextQuestions;
+  await Promise.all(workers);
+  return nextQuestions.filter(Boolean);
 };
 
 const preparePlacementPayloadForPersistence = async (payload = {}) => {
@@ -926,6 +984,8 @@ const createAdminPlacementTestWithAi = async (req, res) => {
 
     const payload = normalizePlacementTestPayload({
       title: input.title,
+      levelFrom: input.levelFrom,
+      levelTo: input.levelTo,
       description:
         input.description ||
         aiDraft.description ||
@@ -937,7 +997,7 @@ const createAdminPlacementTestWithAi = async (req, res) => {
       durationMinutes: input.durationMinutes,
       isActive: input.isActive,
       questions: baseQuestions,
-      levelRules: buildLevelRulesFromQuestions(baseQuestions),
+      autoRules: true,
     });
 
     return res.status(200).json({
@@ -966,6 +1026,8 @@ const updateAdminPlacementTest = async (req, res) => {
     }
 
     test.title = payload.title;
+    test.levelFrom = payload.levelFrom;
+    test.levelTo = payload.levelTo;
     test.description = payload.description;
     test.instructions = payload.instructions;
     test.durationMinutes = payload.durationMinutes;
@@ -1285,6 +1347,70 @@ const skipPlacementTest = async (req, res) => {
   }
 };
 
+const regenerateAdminPlacementQuestionAudio = async (req, res) => {
+  try {
+    const testId = normalizeString(req.params?.id);
+    const questionId = normalizeString(req.params?.questionId);
+
+    if (!testId || !questionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing testId or questionId.",
+      });
+    }
+
+    const test = await PlacementTest.findById(testId);
+
+    if (!test) {
+      return res.status(404).json({
+        success: false,
+        message: "Placement test not found",
+      });
+    }
+
+    const questionIndex = (test.questions || []).findIndex((q) => q.id === questionId);
+    if (questionIndex < 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Placement question not found",
+      });
+    }
+
+    const question = test.questions[questionIndex];
+    const ttsText = normalizeString(question.passage) || normalizeString(question.prompt);
+
+    if (!ttsText) {
+      return res.status(400).json({
+        success: false,
+        message: "Question has no passage/prompt text for TTS.",
+      });
+    }
+
+    const audioBuffer = await generateSpeechBuffer(ttsText);
+    const uploadResult = await uploadBufferToCloudinary(audioBuffer, {
+      folder: "placement-tests/listening-audio",
+      publicId: `placement-${question.id}-${Date.now()}`,
+      resourceType: "video",
+      tags: ["placement-test", "listening", "tts", "retry"],
+    });
+
+    test.questions[questionIndex].audioUrl = uploadResult.secure_url || uploadResult.url || "";
+    await test.save();
+
+    const freshTest = await PlacementTest.findById(test._id).lean();
+    return res.status(200).json({
+      success: true,
+      message: "Audio regenerated successfully",
+      data: serializePlacementTestForAdmin(freshTest),
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to regenerate audio",
+    });
+  }
+};
+
 export {
   activateAdminPlacementTest,
   confirmPlacementResult,
@@ -1295,6 +1421,7 @@ export {
   getAdminPlacementTestById,
   getAdminPlacementTests,
   getPlacementAttemptById,
+  regenerateAdminPlacementQuestionAudio,
   skipPlacementTest,
   submitPlacementTest,
   updateAdminPlacementTest,

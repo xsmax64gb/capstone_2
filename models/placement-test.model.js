@@ -111,6 +111,16 @@ const placementTestSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    levelFrom: {
+      type: String,
+      enum: LEVELS,
+      default: "A1",
+    },
+    levelTo: {
+      type: String,
+      enum: LEVELS,
+      default: "C2",
+    },
     description: {
       type: String,
       trim: true,
