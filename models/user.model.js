@@ -43,6 +43,12 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: 0,
+      validate: {
+        validator: function(value) {
+          return value >= 0;
+        },
+        message: "XP cannot be negative"
+      }
     },
     onboardingDone: { //test trình độ đầu vào
       type: Boolean,
@@ -100,5 +106,14 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.index({ role: 1, isActive: 1, currentLevel: 1 });
+
+// Pre-save hook to ensure XP is never negative
+userSchema.pre("save", function(next) {
+  if (this.exp < 0) {
+    console.warn(`[User Model] Preventing negative XP for user ${this._id}: ${this.exp} -> 0`);
+    this.exp = 0;
+  }
+  next();
+});
 
 export default mongoose.models.User || mongoose.model("User", userSchema);

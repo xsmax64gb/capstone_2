@@ -1296,8 +1296,11 @@ const submitVocabularyAttempt = async (req, res) => {
 
       let userExpAfter = userDoc ? Number(userDoc.exp) || 0 : null;
       if (!isPersonal && xpAwarded && earnedXp > 0) {
-        await User.updateOne({ _id: userId }, { $inc: { exp: earnedXp } });
-        userExpAfter += earnedXp;
+        const safeXp = Math.max(0, Math.floor(earnedXp));
+        if (safeXp > 0) {
+          await User.updateOne({ _id: userId }, { $inc: { exp: safeXp } });
+          userExpAfter += safeXp;
+        }
       }
 
       return res.status(201).json({

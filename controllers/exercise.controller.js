@@ -966,11 +966,14 @@ const submitExerciseAttempt = async (req, res) => {
 
         let updatedUserExp = toSafeInt(user.exp, 0);
         if (!skipCatalogProgress && xpAwarded && earnedXp > 0) {
-            await User.updateOne(
-                { _id: userId },
-                { $inc: { exp: earnedXp } }
-            );
-            updatedUserExp += earnedXp;
+            const safeXp = Math.max(0, Math.floor(earnedXp));
+            if (safeXp > 0) {
+                await User.updateOne(
+                    { _id: userId },
+                    { $inc: { exp: safeXp } }
+                );
+                updatedUserExp += safeXp;
+            }
         }
 
         const attempt = await ExerciseAttempt.create({

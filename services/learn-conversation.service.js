@@ -515,7 +515,7 @@ export async function endConversation(userId, conversationId) {
   await User.updateOne(
     { _id: userId },
     {
-      $inc: { exp: xpEarned },
+      $inc: { exp: Math.max(0, Math.floor(xpEarned)) },
       $set: { lastActiveAt: new Date() },
     }
   );

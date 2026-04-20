@@ -31,7 +31,10 @@ export async function tryGrantAchievementByKey(userId, key) {
 
   const xp = achievement.xpReward || 0;
   if (xp > 0) {
-    await User.updateOne({ _id: uid }, { $inc: { exp: xp } });
+    const safeXp = Math.max(0, Math.floor(xp));
+    if (safeXp > 0) {
+      await User.updateOne({ _id: uid }, { $inc: { exp: safeXp } });
+    }
   }
 
   try {

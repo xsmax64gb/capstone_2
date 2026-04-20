@@ -20,6 +20,11 @@ import UserLearnAchievement from "./user-learn-achievement.model.js";
 import Payment from "./payment.model.js";
 import PaymentPricing from "./payment-pricing.model.js";
 import InboxNotification from "./inbox-notification.model.js";
+import UserLevel from "./user-level.model.js";
+import LevelTest from "./level-test.model.js";
+import LevelTestAttempt from "./level-test-attempt.model.js";
+import LevelHistory from "./level-history.model.js";
+import LevelBadge from "./level-badge.model.js";
 
 export {
   User,
@@ -44,4 +49,9 @@ export {
   Payment,
   PaymentPricing,
   InboxNotification,
+  UserLevel,
+  LevelTest,
+  LevelTestAttempt,
+  LevelHistory,
+  LevelBadge,
 };
