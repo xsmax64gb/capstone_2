@@ -21,7 +21,7 @@ import {
     updatePaymentPackage,
 } from "../services/payment-package.service.js";
 import { getUserFeatureQuotaOverview } from "../services/feature-quota.service.js";
-import { runPaymentSync } from "../services/payment-sync.service.js";
+import { runPaymentSync, runPaymentSyncForInvoice } from "../services/payment-sync.service.js";
 
 const MIN_BANK_TRANSFER_AMOUNT = 2000;
 
@@ -299,7 +299,10 @@ const reconcilePayment = async (req, res) => {
             });
         }
 
-        const syncSummary = await runPaymentSync({ source: "manual" });
+        const syncSummary = await runPaymentSyncForInvoice({
+            invoiceNumber,
+            source: "manual",
+        });
         const payment = await expirePaymentIfNeeded(
             await getPaymentByInvoice(invoiceNumber, ownerFilter)
         );

@@ -1,5 +1,6 @@
 import {
     expireOverduePendingPayments,
+    getPaymentByInvoice,
     listPendingPayments,
     markPaymentPaidByInvoice,
 } from "./payment.service.js";
@@ -9,6 +10,55 @@ const RATE_WINDOW_MS = 60 * 1000;
 const XGATE_RATE_LIMIT_PER_MINUTE = 5;
 
 const syncRequestTimestamps = [];
+const focusSyncRequestTimestamps = [];
+
+const pad2 = (value) => String(value).padStart(2, "0");
+
+const toYmd = (value) => {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return "";
+    }
+
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+};
+
+const pruneFocusRateWindow = () => {
+    const now = Date.now();
+    while (focusSyncRequestTimestamps.length > 0) {
+        if (now - focusSyncRequestTimestamps[0] <= RATE_WINDOW_MS) {
+            break;
+        }
+
+        focusSyncRequestTimestamps.shift();
+    }
+};
+
+const resolveFocusRateLimitPerMinute = () =>
+    sanitizePositiveInt(process.env.XGATE_FOCUS_RATE_LIMIT_PER_MINUTE, 30, 5, 120);
+
+const canSendFocusXGateRequest = () => {
+    pruneFocusRateWindow();
+    return focusSyncRequestTimestamps.length < resolveFocusRateLimitPerMinute();
+};
+
+const registerFocusXGateRequest = () => {
+    focusSyncRequestTimestamps.push(Date.now());
+};
+
+const transactionAmountMatches = (transaction, expectedAmount) => {
+    const expected = Number(expectedAmount);
+    if (!Number.isFinite(expected)) {
+        return false;
+    }
+
+    const amount = Number(transaction?.amount);
+    if (!Number.isFinite(amount)) {
+        return false;
+    }
+
+    return Math.abs(amount - expected) < 1;
+};
 
 const normalizeTrimmedString = (value) => String(value ?? "").trim();
 
@@ -97,6 +147,198 @@ const resolveMaxRequests = (maxRequests) => {
 const resolveFetchType = () => {
     const normalized = normalizeTrimmedString(process.env.XGATE_TYPE).toLowerCase();
     return normalized === "out" ? "out" : "in";
+};
+
+const runPaymentSyncForInvoice = async ({
+    invoiceNumber,
+    source = "user_reconcile",
+} = {}) => {
+    const startedAt = new Date();
+    const normalizedInvoice = normalizeTrimmedString(invoiceNumber);
+
+    await expireOverduePendingPayments();
+
+    if (!normalizedInvoice) {
+        return {
+            source,
+            startedAt: startedAt.toISOString(),
+            finishedAt: new Date().toISOString(),
+            pendingChecked: 0,
+            matchedPayments: 0,
+            updatedPayments: 0,
+            xgateRequests: 0,
+            xgateTransactions: 0,
+            skippedByRateLimit: false,
+            status: "skipped",
+            message: "invoiceNumber is required",
+        };
+    }
+
+    const payment = await getPaymentByInvoice(normalizedInvoice);
+    if (!payment || payment.status !== "pending") {
+        return {
+            source,
+            startedAt: startedAt.toISOString(),
+            finishedAt: new Date().toISOString(),
+            pendingChecked: 0,
+            matchedPayments: 0,
+            updatedPayments: 0,
+            xgateRequests: 0,
+            xgateTransactions: 0,
+            skippedByRateLimit: false,
+            status: "completed",
+            message: "No pending payment for this invoice",
+        };
+    }
+
+    if (!canSendFocusXGateRequest()) {
+        return {
+            source,
+            startedAt: startedAt.toISOString(),
+            finishedAt: new Date().toISOString(),
+            pendingChecked: 1,
+            matchedPayments: 0,
+            updatedPayments: 0,
+            xgateRequests: 0,
+            xgateTransactions: 0,
+            skippedByRateLimit: true,
+            status: "completed",
+            message: "Skipped invoice sync due to XGate focus rate limit window",
+        };
+    }
+
+    const token = sanitizeInvoiceToken(payment.invoiceNumber);
+    if (!token || token.length < 3) {
+        return {
+            source,
+            startedAt: startedAt.toISOString(),
+            finishedAt: new Date().toISOString(),
+            pendingChecked: 1,
+            matchedPayments: 0,
+            updatedPayments: 0,
+            xgateRequests: 0,
+            xgateTransactions: 0,
+            skippedByRateLimit: false,
+            status: "completed",
+            message: "Invoice number could not be normalized for matching",
+        };
+    }
+
+    const account = normalizeTrimmedString(process.env.XGATE_ACCOUNT);
+    const bank = normalizeTrimmedString(process.env.XGATE_BANK);
+    const pageLimit = sanitizePositiveInt(process.env.XGATE_PAGE_LIMIT, 50, 1, 50);
+    const createdAt = payment.createdAt ? new Date(payment.createdAt) : new Date();
+    const dateFromBase = new Date(createdAt);
+    dateFromBase.setDate(dateFromBase.getDate() - 1);
+    const dateFrom = toYmd(dateFromBase);
+    const dateTo = toYmd(new Date());
+
+    const baseFilters = {
+        page: 1,
+        limit: pageLimit,
+        type: resolveFetchType(),
+        account,
+        bank,
+        amountMin: payment.amount,
+        amountMax: payment.amount,
+        dateFrom,
+        dateTo,
+        sort: "date_desc",
+    };
+
+    const tryMatchTransaction = (transaction) => {
+        if (!transactionAmountMatches(transaction, payment.amount)) {
+            return null;
+        }
+
+        const matchCandidates = buildTransactionMatchCandidates(transaction);
+        const matchedCandidate = matchCandidates.find((candidate) =>
+            candidate.normalized.includes(token)
+        );
+
+        if (!matchedCandidate) {
+            return null;
+        }
+
+        return {
+            transaction,
+            matchedValue: matchedCandidate.raw,
+        };
+    };
+
+    let xgateRequests = 0;
+    let transactions = [];
+
+    try {
+        registerFocusXGateRequest();
+        xgateRequests += 1;
+
+        const first = await fetchXGateTransactions({
+            ...baseFilters,
+            content: payment.invoiceNumber,
+        });
+
+        transactions = [...first.transactions];
+
+        if (transactions.length === 0 && canSendFocusXGateRequest()) {
+            registerFocusXGateRequest();
+            xgateRequests += 1;
+
+            const second = await fetchXGateTransactions(baseFilters);
+            transactions = [...second.transactions];
+        }
+    } catch (error) {
+        return {
+            source,
+            startedAt: startedAt.toISOString(),
+            finishedAt: new Date().toISOString(),
+            pendingChecked: 1,
+            matchedPayments: 0,
+            updatedPayments: 0,
+            xgateRequests,
+            xgateTransactions: 0,
+            skippedByRateLimit: false,
+            status: "error",
+            message: error.message || "XGate invoice sync failed",
+        };
+    }
+
+    let match = null;
+    for (const transaction of transactions) {
+        match = tryMatchTransaction(transaction);
+        if (match) {
+            break;
+        }
+    }
+
+    let updatedPayments = 0;
+    if (match) {
+        updatedPayments = await markPaymentPaidByInvoice({
+            invoiceNumber: payment.invoiceNumber,
+            xgateReference: match.transaction.referenceCode || match.transaction.id,
+            matchedContent: match.matchedValue,
+            transactionDate: match.transaction.transactionDate,
+        });
+    }
+
+    const message =
+        updatedPayments > 0
+            ? "Payment matched and marked as paid"
+            : "No matching XGate transaction for this invoice yet";
+
+    return {
+        source,
+        startedAt: startedAt.toISOString(),
+        finishedAt: new Date().toISOString(),
+        pendingChecked: 1,
+        matchedPayments: updatedPayments > 0 ? 1 : 0,
+        updatedPayments,
+        xgateRequests,
+        xgateTransactions: transactions.length,
+        skippedByRateLimit: false,
+        status: "completed",
+        message,
+    };
 };
 
 const runPaymentSync = async ({
@@ -242,6 +484,7 @@ export {
     RATE_WINDOW_MS,
     XGATE_RATE_LIMIT_PER_MINUTE,
     runPaymentSync,
+    runPaymentSyncForInvoice,
     sanitizeInvoiceToken,
     sanitizeTextForMatch,
 };

@@ -32,6 +32,18 @@ const PAYMENT_PACKAGE_FEATURE_CATALOG = [
         description: "Học, lưu và ôn tập từ vựng theo chủ đề.",
         category: "Từ vựng",
     },
+    {
+        key: "ai_exercise_builder",
+        label: "Tạo bài tập với AI",
+        description: "Tạo bộ bài tập cá nhân bằng AI từ prompt hoặc PDF.",
+        category: "AI Creator",
+    },
+    {
+        key: "ai_vocabulary_builder",
+        label: "Tạo từ vựng với AI",
+        description: "Tạo bộ từ vựng cá nhân bằng AI từ prompt hoặc PDF.",
+        category: "AI Creator",
+    },
 ];
 
 const FEATURE_SCOPE_PRESETS_BY_TIER = {
@@ -54,6 +66,18 @@ const FEATURE_SCOPE_PRESETS_BY_TIER = {
             quotaPeriod: "week",
             note: "Ôn tập và học mới tối đa 300 mục/tuần.",
         },
+        ai_exercise_builder: {
+            accessLevel: "basic",
+            quota: 20,
+            quotaPeriod: "month",
+            note: "Tối đa 20 lượt tạo bài tập AI mỗi tháng.",
+        },
+        ai_vocabulary_builder: {
+            accessLevel: "basic",
+            quota: 30,
+            quotaPeriod: "month",
+            note: "Tối đa 30 lượt tạo từ vựng AI mỗi tháng.",
+        },
     },
     plus: {
         ai_speaking: {
@@ -74,6 +98,18 @@ const FEATURE_SCOPE_PRESETS_BY_TIER = {
             quotaPeriod: "week",
             note: "Mở rộng ôn tập từ vựng 1.200 mục/tuần.",
         },
+        ai_exercise_builder: {
+            accessLevel: "advanced",
+            quota: 120,
+            quotaPeriod: "month",
+            note: "Tối đa 120 lượt tạo bài tập AI mỗi tháng.",
+        },
+        ai_vocabulary_builder: {
+            accessLevel: "advanced",
+            quota: 180,
+            quotaPeriod: "month",
+            note: "Tối đa 180 lượt tạo từ vựng AI mỗi tháng.",
+        },
     },
     pro: {
         ai_speaking: {
@@ -93,6 +129,18 @@ const FEATURE_SCOPE_PRESETS_BY_TIER = {
             quota: null,
             quotaPeriod: "billing_cycle",
             note: "Mở đầy đủ thư viện từ vựng không giới hạn.",
+        },
+        ai_exercise_builder: {
+            accessLevel: "full",
+            quota: null,
+            quotaPeriod: "billing_cycle",
+            note: "Tạo bài tập AI không giới hạn.",
+        },
+        ai_vocabulary_builder: {
+            accessLevel: "full",
+            quota: null,
+            quotaPeriod: "billing_cycle",
+            note: "Tạo từ vựng AI không giới hạn.",
         },
     },
 };

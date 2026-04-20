@@ -158,18 +158,18 @@ router.get(
 
 router.post(
     "/exercises/ai/generate-prompt",
-    requireFeatureQuota("exercise_library"),
+    requireFeatureQuota("ai_exercise_builder", { enforceQuota: true }),
     generateExerciseAiFromPrompt
 );
 router.post(
     "/exercises/ai/generate-pdf",
-    requireFeatureQuota("exercise_library"),
+    requireFeatureQuota("ai_exercise_builder", { enforceQuota: true }),
     uploadExerciseAiPdf,
     generateExerciseAiFromPdf
 );
 router.post(
     "/exercises/ai",
-    requireFeatureQuota("exercise_library"),
+    requireFeatureQuota("ai_exercise_builder", { enforceQuota: true }),
     createUserAiExercise
 );
 router.put(

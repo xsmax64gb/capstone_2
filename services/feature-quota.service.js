@@ -4,22 +4,31 @@ import ExerciseAttempt from "../models/exercise-attempt.model.js";
 import LearnConversation from "../models/learn-conversation.model.js";
 import PaymentPackage from "../models/payment-package.model.js";
 import Payment from "../models/payment.model.js";
+import Exercise from "../models/exercise.model.js";
+import VocabularySet from "../models/vocabulary-set.model.js";
 import VocabularyAttempt from "../models/vocabulary-attempt.model.js";
 
 const DEFAULT_FREE_PACKAGE_SLUG = "free";
 
 const FEATURE_LABELS = {
-    ai_speaking: "Luyen noi voi AI",
-    exercise_library: "Thu vien bai tap",
-    vocabulary_library: "Thu vien tu vung",
+    ai_speaking: "Luyện nói với AI",
+    exercise_library: "Thư viện bài tập",
+    vocabulary_library: "Thư viện từ vựng",
+    ai_exercise_builder: "Tạo bài tập với AI",
+    ai_vocabulary_builder: "Tạo từ vựng với AI",
+};
+
+const FEATURE_SCOPE_FALLBACK = {
+    ai_exercise_builder: "exercise_library",
+    ai_vocabulary_builder: "vocabulary_library",
 };
 
 const QUOTA_PERIOD_LABELS = {
-    day: "ngay",
-    week: "tuan",
-    month: "thang",
-    billing_cycle: "chu ky goi",
-    lifetime: "tron doi",
+    day: "ngày",
+    week: "tuần",
+    month: "tháng",
+    billing_cycle: "chu kỳ gói",
+    lifetime: "trọn đời",
 };
 
 const SUPPORTED_FEATURE_KEYS = new Set(Object.keys(FEATURE_LABELS));
@@ -36,6 +45,22 @@ const FEATURE_USAGE_CONFIG = {
     vocabulary_library: {
         model: VocabularyAttempt,
         dateField: "submittedAt",
+    },
+    ai_exercise_builder: {
+        model: Exercise,
+        dateField: "createdAt",
+        buildFilter: ({ userId }) => ({
+            ownerId: userId,
+            source: { $in: ["ai_pdf", "ai_prompt"] },
+        }),
+    },
+    ai_vocabulary_builder: {
+        model: VocabularySet,
+        dateField: "createdAt",
+        buildFilter: ({ userId }) => ({
+            ownerId: userId,
+            source: { $in: ["ai_pdf", "ai_prompt"] },
+        }),
     },
 };
 
@@ -233,7 +258,7 @@ const resolveUserEntitlement = async (userId) => {
         statusCode: 500,
         code: "FEATURE_PACKAGE_NOT_CONFIGURED",
         message:
-            "He thong chua co goi mac dinh cho nguoi dung. Vui long cau hinh goi Free mac dinh.",
+            "Hệ thống chưa có gói mặc định cho người dùng. Vui lòng cấu hình gói Free mặc định.",
     });
 };
 
@@ -336,8 +361,12 @@ const countFeatureUsage = async ({ userId, featureKey, start, end }) => {
         ? { $gte: start, $lt: end }
         : { $gte: start };
 
+    const baseFilter = usageConfig.buildFilter
+        ? usageConfig.buildFilter({ userId })
+        : { userId };
+
     return usageConfig.model.countDocuments({
-        userId,
+        ...baseFilter,
         [usageConfig.dateField]: dateFilter,
     });
 };
@@ -358,13 +387,15 @@ const ensureFeatureAccessAndQuota = async ({
     }
 
     const entitlement = await resolveUserEntitlement(userId);
-    const scope = entitlement.scopeByFeatureKey.get(normalizedFeatureKey);
+    const scope =
+        entitlement.scopeByFeatureKey.get(normalizedFeatureKey) ||
+        entitlement.scopeByFeatureKey.get(FEATURE_SCOPE_FALLBACK[normalizedFeatureKey] || "");
 
     if (!scope) {
         throw createQuotaError({
             statusCode: 403,
             code: "FEATURE_NOT_ENABLED",
-            message: `${FEATURE_LABELS[normalizedFeatureKey]} chua duoc mo trong goi hien tai.`,
+            message: `${FEATURE_LABELS[normalizedFeatureKey]} chưa được mở trong gói hiện tại.`,
             data: {
                 featureKey: normalizedFeatureKey,
                 packageName: entitlement.packageName,
@@ -386,7 +417,7 @@ const ensureFeatureAccessAndQuota = async ({
             remaining: null,
             quotaPeriod: scope.quotaPeriod,
             quotaPeriodLabel:
-                QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod || "thang",
+                QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod || "tháng",
             periodStart: null,
             periodEnd: null,
             source: entitlement.source,
@@ -411,7 +442,7 @@ const ensureFeatureAccessAndQuota = async ({
         throw createQuotaError({
             statusCode: 429,
             code: "FEATURE_QUOTA_EXCEEDED",
-            message: `Ban da dung het quota ${FEATURE_LABELS[normalizedFeatureKey]} (${quotaValue} luot/${QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod}).`,
+            message: `Bạn đã dùng hết quota ${FEATURE_LABELS[normalizedFeatureKey]} (${quotaValue} lượt/${QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod}).`,
             data: {
                 featureKey: normalizedFeatureKey,
                 featureLabel: FEATURE_LABELS[normalizedFeatureKey],
@@ -423,7 +454,7 @@ const ensureFeatureAccessAndQuota = async ({
                 remaining: 0,
                 quotaPeriod: scope.quotaPeriod,
                 quotaPeriodLabel:
-                    QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod || "thang",
+                    QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod || "tháng",
                 periodStart: quotaWindow.start.toISOString(),
                 periodEnd: quotaWindow.end ? quotaWindow.end.toISOString() : null,
                 source: entitlement.source,
@@ -442,7 +473,7 @@ const ensureFeatureAccessAndQuota = async ({
         remaining,
         quotaPeriod: scope.quotaPeriod,
         quotaPeriodLabel:
-            QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod || "thang",
+            QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod || "tháng",
         periodStart: quotaWindow.start.toISOString(),
         periodEnd: quotaWindow.end ? quotaWindow.end.toISOString() : null,
         source: entitlement.source,
@@ -455,7 +486,7 @@ const getUserFeatureQuotaOverview = async ({ userId } = {}) => {
         throw createQuotaError({
             statusCode: 400,
             code: "FEATURE_QUOTA_INVALID_USER",
-            message: "userId is required to resolve feature quota overview",
+            message: "userId là bắt buộc để lấy tổng quan quota",
         });
     }
 
@@ -487,7 +518,7 @@ const getUserFeatureQuotaOverview = async ({ userId } = {}) => {
 
             const quotaValue = toNormalizedQuota(scope.quota);
             const quotaPeriodLabel =
-                QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod || "thang";
+                QUOTA_PERIOD_LABELS[scope.quotaPeriod] || scope.quotaPeriod || "tháng";
 
             if (quotaValue === null) {
                 return {

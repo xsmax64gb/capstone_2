@@ -114,12 +114,12 @@ router.get(
 
 router.post(
   "/vocabularies/personal/generate-prompt",
-  requireFeatureQuota("vocabulary_library"),
+  requireFeatureQuota("ai_vocabulary_builder", { enforceQuota: true }),
   generatePersonalVocabularyFromPrompt
 );
 router.post(
   "/vocabularies/personal/generate-pdf",
-  requireFeatureQuota("vocabulary_library"),
+  requireFeatureQuota("ai_vocabulary_builder", { enforceQuota: true }),
   uploadVocabularyAiPdf,
   generatePersonalVocabularyFromPdf
 );
@@ -130,7 +130,7 @@ router.post(
 );
 router.post(
   "/vocabularies/personal/ai",
-  requireFeatureQuota("vocabulary_library"),
+  requireFeatureQuota("ai_vocabulary_builder", { enforceQuota: true }),
   createPersonalVocabularySetFromAi
 );
 router.put(
