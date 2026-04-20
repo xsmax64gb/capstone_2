@@ -6,9 +6,7 @@ import Vocabulary from "./vocabulary.model.js";
 import VocabularyAttempt from "./vocabulary-attempt.model.js";
 import Exercise from "./exercise.model.js";
 import ExerciseAttempt from "./exercise-attempt.model.js";
-import AiLevel from "./ai-level.model.js";
 import AiSession from "./ai-session.model.js";
-import AiMessage from "./ai-message.model.js";
 import UserProgress from "./user-progress.model.js";
 import Otp from "./otp.model.js";
 import Map from "./map.model.js";
@@ -19,6 +17,14 @@ import LearnMessage from "./learn-message.model.js";
 import BossBattle from "./boss-battle.model.js";
 import LearnAchievement from "./learn-achievement.model.js";
 import UserLearnAchievement from "./user-learn-achievement.model.js";
+import Payment from "./payment.model.js";
+import PaymentPricing from "./payment-pricing.model.js";
+import InboxNotification from "./inbox-notification.model.js";
+import UserLevel from "./user-level.model.js";
+import LevelTest from "./level-test.model.js";
+import LevelTestAttempt from "./level-test-attempt.model.js";
+import LevelHistory from "./level-history.model.js";
+import LevelBadge from "./level-badge.model.js";
 
 export {
   User,
@@ -29,9 +35,7 @@ export {
   VocabularyAttempt,
   Exercise,
   ExerciseAttempt,
-  AiLevel,
   AiSession,
-  AiMessage,
   UserProgress,
   Otp,
   Map,
@@ -42,4 +46,12 @@ export {
   BossBattle,
   LearnAchievement,
   UserLearnAchievement,
+  Payment,
+  PaymentPricing,
+  InboxNotification,
+  UserLevel,
+  LevelTest,
+  LevelTestAttempt,
+  LevelHistory,
+  LevelBadge,
 };

@@ -1,3 +1,4 @@
+// Kết quả làm bài tập của user (answers, score, percent, duration, XP earned)
 import mongoose from "mongoose";
 
 const exerciseAttemptSchema = new mongoose.Schema(
@@ -53,6 +54,27 @@ const exerciseAttemptSchema = new mongoose.Schema(
             required: true,
             min: 0,
             default: 0,
+        },
+        perfectScore: {
+            type: Boolean,
+            default: false,
+        },
+        xpAwarded: {
+            type: Boolean,
+            default: false,
+        },
+        xpReason: {
+            type: String,
+            trim: true,
+            default: "not_perfect",
+        },
+        exerciseCompleted: {
+            type: Boolean,
+            default: false,
+        },
+        firstCompletion: {
+            type: Boolean,
+            default: false,
         },
         submittedAt: {
             type: Date,

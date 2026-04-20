@@ -1,3 +1,4 @@
+// Bước trong map (order, scenario, AI persona, boss tasks, XP reward, pass criteria)
 import mongoose from "mongoose";
 
 import { LEARN_SCORING_DIFFICULTIES, STEP_TYPES } from "./constants.js";

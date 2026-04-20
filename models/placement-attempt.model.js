@@ -1,3 +1,4 @@
+// Kết quả kiểm tra trình độ của user (answers, scores, pass status, profile snapshot)
 import mongoose from "mongoose";
 
 import { LEVELS, PLACEMENT_SKILL_TYPES } from "./constants.js";

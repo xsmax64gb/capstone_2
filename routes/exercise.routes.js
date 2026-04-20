@@ -2,7 +2,11 @@ import express from "express";
 
 import {
     createAdminExercise,
+    createUserAiExercise,
     deleteAdminExercise,
+    deleteUserAiExercise,
+    generateExerciseAiFromPdf,
+    generateExerciseAiFromPrompt,
     getAdminExercises,
     getExerciseById,
     getExerciseHints,
@@ -14,9 +18,11 @@ import {
     listExercises,
     submitExerciseAttempt,
     updateAdminExercise,
+    updateUserAiExercise,
 } from "../controllers/index.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.middleware.js";
-import { uploadExerciseCoverImage } from "../middleware/upload.middleware.js";
+import { requireFeatureQuota } from "../middleware/feature-quota.middleware.js";
+import { uploadExerciseAiPdf, uploadExerciseCoverImage } from "../middleware/upload.middleware.js";
 
 const router = express.Router();
 
@@ -80,7 +86,11 @@ router.delete("/admin/exercises/:id", requireAuth, requireAdmin, deleteAdminExer
 
 router.use("/exercises", requireAuth);
 
-router.get("/exercises", listExercises);
+router.get(
+    "/exercises",
+    requireFeatureQuota("exercise_library"),
+    listExercises
+);
 
 /**
  * @swagger
@@ -94,7 +104,11 @@ router.get("/exercises", listExercises);
  *       200:
  *         description: Exercise summary fetched successfully
  */
-router.get("/exercises/summary", getExerciseSummary);
+router.get(
+    "/exercises/summary",
+    requireFeatureQuota("exercise_library"),
+    getExerciseSummary
+);
 
 /**
  * @swagger
@@ -113,7 +127,11 @@ router.get("/exercises/summary", getExerciseSummary);
  *       200:
  *         description: Recommended exercises fetched successfully
  */
-router.get("/exercises/recommended", getRecommendedExercises);
+router.get(
+    "/exercises/recommended",
+    requireFeatureQuota("exercise_library"),
+    getRecommendedExercises
+);
 
 /**
  * @swagger
@@ -132,7 +150,38 @@ router.get("/exercises/recommended", getRecommendedExercises);
  *       200:
  *         description: Exercise history fetched successfully
  */
-router.get("/exercises/history", getExerciseHistory);
+router.get(
+    "/exercises/history",
+    requireFeatureQuota("exercise_library"),
+    getExerciseHistory
+);
+
+router.post(
+    "/exercises/ai/generate-prompt",
+    requireFeatureQuota("ai_exercise_builder", { enforceQuota: true }),
+    generateExerciseAiFromPrompt
+);
+router.post(
+    "/exercises/ai/generate-pdf",
+    requireFeatureQuota("ai_exercise_builder", { enforceQuota: true }),
+    uploadExerciseAiPdf,
+    generateExerciseAiFromPdf
+);
+router.post(
+    "/exercises/ai",
+    requireFeatureQuota("ai_exercise_builder", { enforceQuota: true }),
+    createUserAiExercise
+);
+router.put(
+    "/exercises/ai/:id",
+    requireFeatureQuota("exercise_library"),
+    updateUserAiExercise
+);
+router.delete(
+    "/exercises/ai/:id",
+    requireFeatureQuota("exercise_library"),
+    deleteUserAiExercise
+);
 
 /**
  * @swagger
@@ -154,7 +203,11 @@ router.get("/exercises/history", getExerciseHistory);
  *       404:
  *         description: Exercise not found
  */
-router.get("/exercises/:id", getExerciseById);
+router.get(
+    "/exercises/:id",
+    requireFeatureQuota("exercise_library"),
+    getExerciseById
+);
 
 /**
  * @swagger
@@ -174,7 +227,11 @@ router.get("/exercises/:id", getExerciseById);
  *       200:
  *         description: Exercise hints fetched successfully
  */
-router.get("/exercises/:id/hints", getExerciseHints);
+router.get(
+    "/exercises/:id/hints",
+    requireFeatureQuota("exercise_library"),
+    getExerciseHints
+);
 
 /**
  * @swagger
@@ -194,7 +251,11 @@ router.get("/exercises/:id/hints", getExerciseHints);
  *       200:
  *         description: Leaderboard fetched successfully
  */
-router.get("/exercises/:id/leaderboard", getExerciseLeaderboard);
+router.get(
+    "/exercises/:id/leaderboard",
+    requireFeatureQuota("exercise_library"),
+    getExerciseLeaderboard
+);
 
 /**
  * @swagger
@@ -219,7 +280,11 @@ router.get("/exercises/:id/leaderboard", getExerciseLeaderboard);
  *       200:
  *         description: Exercise review generated successfully
  */
-router.get("/exercises/:id/review", getExerciseReview);
+router.get(
+    "/exercises/:id/review",
+    requireFeatureQuota("exercise_library"),
+    getExerciseReview
+);
 
 /**
  * @swagger
@@ -254,6 +319,10 @@ router.get("/exercises/:id/review", getExerciseReview);
  *       201:
  *         description: Exercise submitted successfully
  */
-router.post("/exercises/:id/submit", submitExerciseAttempt);
+router.post(
+    "/exercises/:id/submit",
+    requireFeatureQuota("exercise_library", { enforceQuota: true }),
+    submitExerciseAttempt
+);
 
 export default router;

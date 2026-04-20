@@ -1,3 +1,4 @@
+// Trận chiến boss (userId, mapId, HP, tasks, completion status, result, XP bonus, items unlocked)
 import mongoose from "mongoose";
 
 import { BOSS_RESULTS } from "./constants.js";

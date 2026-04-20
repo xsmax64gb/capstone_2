@@ -1,6 +1,7 @@
+// Bài tập (tiêu đề, loại, cấp độ, câu hỏi, options, đáp án, scores)
 import mongoose from "mongoose";
 
-import { LEVELS, EXERCISE_TYPES } from "./constants.js";
+import { LEVELS, EXERCISE_SOURCES, EXERCISE_TYPES } from "./constants.js";
 
 const exerciseQuestionSchema = new mongoose.Schema(
   {
@@ -104,6 +105,23 @@ const exerciseSchema = new mongoose.Schema(
         min: 0,
       },
     },
+    ownerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    source: {
+      type: String,
+      enum: EXERCISE_SOURCES,
+      default: "catalog",
+    },
+    aiMeta: {
+      grammarFocus: { type: String, trim: true, default: "" },
+      vocabularyFocus: { type: String, trim: true, default: "" },
+      difficulty: { type: String, trim: true, default: "" },
+      context: { type: String, trim: true, default: "" },
+      additionalInstruction: { type: String, trim: true, default: "" },
+    },
   },
   {
     collection: "exercises",
@@ -112,10 +130,16 @@ const exerciseSchema = new mongoose.Schema(
 );
 
 exerciseSchema.index({ level: 1, topic: 1, type: 1 });
+exerciseSchema.index({ ownerId: 1 });
 
 exerciseSchema.pre("save", function updateDerivedFields(next) {
   if (!this.questionCount || this.questionCount <= 0) {
     this.questionCount = Array.isArray(this.questions) ? this.questions.length : 0;
+  }
+
+  if (this.ownerId) {
+    this.rewardsXp = 0;
+    this.rewards = { exp: 0 };
   }
 
   if (this.rewardsXp === null || this.rewardsXp === undefined) {

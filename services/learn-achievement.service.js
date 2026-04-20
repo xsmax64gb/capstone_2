@@ -5,6 +5,7 @@ import {
   UserLearnAchievement,
   User,
 } from "../models/index.js";
+import { createInboxNotificationForUser } from "./inbox-notification.service.js";
 
 /**
  * Grant achievement by trigger key if not already earned. Adds XP to user.exp.
@@ -30,7 +31,21 @@ export async function tryGrantAchievementByKey(userId, key) {
 
   const xp = achievement.xpReward || 0;
   if (xp > 0) {
-    await User.updateOne({ _id: uid }, { $inc: { exp: xp } });
+    const safeXp = Math.max(0, Math.floor(xp));
+    if (safeXp > 0) {
+      await User.updateOne({ _id: uid }, { $inc: { exp: safeXp } });
+    }
+  }
+
+  try {
+    await createInboxNotificationForUser(String(userId), {
+      title: "Thành tích mới",
+      body: [achievement.title, achievement.description].filter(Boolean).join(" — "),
+      category: "milestone",
+      meta: { kind: "achievement", key: achievement.key },
+    });
+  } catch (err) {
+    console.error("[Inbox] achievement", err?.message || err);
   }
 
   return { newlyEarned: true, achievement };

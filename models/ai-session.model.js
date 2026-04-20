@@ -1,3 +1,4 @@
+// Phiên hội thoại AI của user (level, stage, score, feedback: grammar, vocabulary, fluency, relevance)
 import mongoose from "mongoose";
 
 import { LEVELS, AI_SESSION_STATUSES } from "./constants.js";

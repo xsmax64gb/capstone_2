@@ -6,13 +6,6 @@ import {
   sendRegisterOtp,
 } from "./auth.controller.js";
 import {
-  createAdminAiLevel,
-  deleteAdminAiLevel,
-  getAdminAiLevels,
-  updateAdminAiLevel,
-  uploadAdminImage,
-} from "./ai.controller.js";
-import {
   activateAdminPlacementTest,
   confirmPlacementResult,
   createAdminPlacementTest,
@@ -22,6 +15,7 @@ import {
   getAdminPlacementTestById,
   getAdminPlacementTests,
   getPlacementAttemptById,
+  regenerateAdminPlacementQuestionAudio,
   skipPlacementTest,
   submitPlacementTest,
   updateAdminPlacementTest,
@@ -41,6 +35,13 @@ import {
   submitExerciseAttempt,
   updateAdminExercise,
 } from "./exercise.controller.js";
+import {
+  createUserAiExercise,
+  deleteUserAiExercise,
+  generateExerciseAiFromPdf,
+  generateExerciseAiFromPrompt,
+  updateUserAiExercise,
+} from "./exercise-ai.controller.js";
 import {
   createAdminUser,
   deleteAdminUser,
@@ -74,6 +75,14 @@ import {
   updateAdminVocabulary,
   updateAdminVocabularyWord,
 } from "./vocabulary.controller.js";
+import {
+  createPersonalVocabularySetFromAi,
+  createPersonalVocabularySetManual,
+  deletePersonalVocabularySet,
+  generatePersonalVocabularyFromPdf,
+  generatePersonalVocabularyFromPrompt,
+  updatePersonalVocabularySet,
+} from "./vocabulary-personal.controller.js";
 
 const healthCheck = (_req, res) => {
   res.status(200).json({
@@ -87,22 +96,26 @@ export {
   activateAdminPlacementTest,
   changePassword,
   confirmPlacementResult,
-  createAdminAiLevel,
   createAdminExercise,
+  createUserAiExercise,
   createAdminPlacementTest,
   createAdminPlacementTestWithAi,
   createAdminUser,
   createAdminVocabulary,
   createAdminVocabularyWord,
   createAdminVocabularyWordsBulk,
-  deleteAdminAiLevel,
+  createPersonalVocabularySetFromAi,
+  createPersonalVocabularySetManual,
   deleteAdminExercise,
+  deleteUserAiExercise,
   deleteAdminPlacementTest,
   deleteAdminUser,
   deleteAdminVocabulary,
   deleteAdminVocabularyWord,
+  deletePersonalVocabularySet,
+  generateExerciseAiFromPdf,
+  generateExerciseAiFromPrompt,
   getActivePlacementTest,
-  getAdminAiLevels,
   getAdminExercises,
   getAdminOverview,
   getAdminPlacementTestById,
@@ -122,6 +135,8 @@ export {
   getPlacementAttemptById,
   getRecommendedExercises,
   getRecommendedVocabularies,
+  generatePersonalVocabularyFromPdf,
+  generatePersonalVocabularyFromPrompt,
   getVocabularyById,
   getVocabularyHints,
   getVocabularyHistory,
@@ -133,6 +148,7 @@ export {
   listVocabularies,
   login,
   register,
+  regenerateAdminPlacementQuestionAudio,
   resetAdminUserPassword,
   sendChangePasswordOtp,
   sendRegisterOtp,
@@ -140,13 +156,13 @@ export {
   submitExerciseAttempt,
   submitPlacementTest,
   submitVocabularyAttempt,
-  updateAdminAiLevel,
   updateAdminExercise,
+  updateUserAiExercise,
   updateAdminPlacementTest,
   updateAdminUser,
   updateAdminUserRole,
   updateAdminUserStatus,
   updateAdminVocabulary,
   updateAdminVocabularyWord,
-  uploadAdminImage,
+  updatePersonalVocabularySet,
 };

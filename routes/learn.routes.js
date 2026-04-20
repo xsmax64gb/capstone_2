@@ -25,20 +25,42 @@ import {
   postStartLearnConversation,
 } from "../controllers/learn.controller.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.middleware.js";
+import { requireFeatureQuota } from "../middleware/feature-quota.middleware.js";
 
 const router = express.Router();
 
 router.get("/learn/maps", requireAuth, listLearnMaps);
 router.get("/learn/maps/:slug", requireAuth, getLearnMapBySlug);
-router.post("/learn/steps/:stepId/conversations", requireAuth, postStartLearnConversation);
-router.get("/learn/conversations/:id", requireAuth, getLearnConversation);
-router.post("/learn/conversations/:id/messages/quick", requireAuth, postLearnMessageQuick);
+router.post(
+  "/learn/steps/:stepId/conversations",
+  requireAuth,
+  requireFeatureQuota("ai_speaking", { enforceQuota: true }),
+  postStartLearnConversation
+);
+router.get(
+  "/learn/conversations/:id",
+  requireAuth,
+  requireFeatureQuota("ai_speaking"),
+  getLearnConversation
+);
+router.post(
+  "/learn/conversations/:id/messages/quick",
+  requireAuth,
+  requireFeatureQuota("ai_speaking"),
+  postLearnMessageQuick
+);
 router.post(
   "/learn/conversations/:id/messages/:messageId/evaluation",
   requireAuth,
+  requireFeatureQuota("ai_speaking"),
   postLearnMessageEvaluation
 );
-router.post("/learn/conversations/:id/end", requireAuth, postEndLearnConversation);
+router.post(
+  "/learn/conversations/:id/end",
+  requireAuth,
+  requireFeatureQuota("ai_speaking"),
+  postEndLearnConversation
+);
 router.get("/learn/achievements/me", requireAuth, getMyLearnAchievements);
 
 router.get("/admin/learn/maps", requireAuth, requireAdmin, adminListLearnMaps);

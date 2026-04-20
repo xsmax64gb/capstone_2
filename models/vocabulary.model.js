@@ -1,3 +1,4 @@
+// Từ vựng chi tiết (word, meaning, example, liên kết setId)
 import mongoose from "mongoose";
 
 const vocabularySchema = new mongoose.Schema(
@@ -23,6 +24,11 @@ const vocabularySchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+    },
+    phonetic: {
+      type: String,
+      trim: true,
+      default: "",
     },
     example: {
       type: String,

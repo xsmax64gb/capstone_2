@@ -22,7 +22,7 @@ const verifyAccessToken = (token) => {
   return jwt.verify(token, process.env.JWT_SECRET || DEFAULT_JWT_SECRET);
 };
 
-const sanitizeUser = (user) => {
+const sanitizeUser = (user) => { // hàm này để 
   return {
     id: user._id,
     fullName: user.fullName,

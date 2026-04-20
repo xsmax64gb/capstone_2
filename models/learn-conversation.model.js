@@ -1,3 +1,4 @@
+// Cuộc hội thoại học tập (userId, stepId, mapId, status, score, XP earned, mistakes)
 import mongoose from "mongoose";
 
 import { LEARN_CONVERSATION_STATUSES } from "./constants.js";

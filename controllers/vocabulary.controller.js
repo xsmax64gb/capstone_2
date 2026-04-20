@@ -3,6 +3,18 @@ import mongoose from "mongoose";
 import { uploadImageFile } from "../helper/upload.helper.js";
 import { Vocabulary, VocabularySet, VocabularyAttempt, User } from "../models/index.js";
 
+const LEVEL_ORDER = ["A1", "A2", "B1", "B2", "C1", "C2"];
+
+const getLevelOrderIndex = (level) => {
+  const normalizedLevel = String(level || "A1").trim().toUpperCase();
+  const index = LEVEL_ORDER.indexOf(normalizedLevel);
+  return index >= 0 ? index : 0;
+};
+
+/** XP chỉ khi độ khó bộ từ ≥ trình độ người học (cùng cấp hoặc cao hơn). */
+const isVocabularyEligibleForXp = (setLevel, userLevel) =>
+  getLevelOrderIndex(setLevel) >= getLevelOrderIndex(userLevel);
+
 const toIsoDate = (value) => {
   const date = value instanceof Date ? value : new Date(value);
 
@@ -607,7 +619,7 @@ const DEFAULT_COVER_IMAGES = {
 const normalizeWordForUser = (word) => ({
   id: String(word._id),
   word: word.word,
-  phonetic: "",
+  phonetic: word.phonetic || "",
   meaning: word.meaning,
   example: word.example || "",
   partOfSpeech: "word",
@@ -615,18 +627,35 @@ const normalizeWordForUser = (word) => ({
   antonyms: [],
 });
 
-const normalizeVocabularySetForUser = (set, words = []) => ({
-  id: String(set._id),
-  title: set.name,
-  description: set.description || "",
-  level: set.level,
-  topic: set.topic || "general",
-  coverImage: set.coverImageUrl || DEFAULT_COVER_IMAGES[set.topic] || DEFAULT_COVER_IMAGES.general,
-  wordCount: words.length,
-  durationMinutes: Math.max(5, Math.round(words.length * 0.8)),
-  rewardsXp: Math.round(words.length * 2),
-  words: words.map(normalizeWordForUser),
-});
+const normalizeVocabularySetForUser = (set, words = []) => {
+  const ownerId = set?.ownerId ? String(set.ownerId) : null;
+  const isPersonal = Boolean(ownerId);
+  return {
+    id: String(set._id),
+    title: set.name,
+    description: set.description || "",
+    level: set.level,
+    topic: set.topic || "general",
+    coverImage: set.coverImageUrl || DEFAULT_COVER_IMAGES[set.topic] || DEFAULT_COVER_IMAGES.general,
+    wordCount: words.length,
+    durationMinutes: Math.max(5, Math.round(words.length * 0.8)),
+    rewardsXp: isPersonal ? 0 : Math.round(words.length * 2),
+    words: words.map(normalizeWordForUser),
+    ownerId,
+    isPersonal,
+    source: set?.source || "catalog",
+  };
+};
+
+const canAccessVocabularySet = (set, userId) => {
+  if (!set?.ownerId) {
+    return true;
+  }
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+    return false;
+  }
+  return String(set.ownerId) === String(userId);
+};
 
 const generateFlashcards = (words) => {
   return words.map((word) => [
@@ -663,10 +692,17 @@ const generateQuizQuestions = (words) => {
 
 const listVocabularies = async (req, res) => {
   try {
+    const { VocabularyAttempt: VA } = mongoose.models;
+    const userId = req.user?.id;
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
     const {
       query: rawQuery,
       level,
       topic,
+      personal,
       page = "1",
       limit = "20",
     } = req.query || {};
@@ -675,7 +711,13 @@ const listVocabularies = async (req, res) => {
     const skip = (Math.max(1, parseInt(page, 10)) - 1) * Math.max(1, parseInt(limit, 10));
     const take = Math.max(1, Math.min(100, parseInt(limit, 10)));
 
-    const filter = { isActive: true };
+    const personalOnly = String(personal || "").toLowerCase() === "true";
+    const filter = personalOnly
+      ? { isActive: true, ownerId: new mongoose.Types.ObjectId(userId) }
+      : {
+        isActive: true,
+        $or: [{ ownerId: null }, { ownerId: new mongoose.Types.ObjectId(userId) }],
+      };
     if (level) filter.level = String(level);
     if (topic) filter.topic = String(topic);
 
@@ -687,6 +729,23 @@ const listVocabularies = async (req, res) => {
       .lean();
 
     const wordsMap = await getWordsMapBySetIds(sets.map((s) => s._id));
+
+    const setIds = sets.map((s) => s._id);
+    const masteredSetIds = new Set();
+    if (userId && setIds.length > 0 && mongoose.Types.ObjectId.isValid(userId)) {
+      const attempts = await VA.find({
+        userId: new mongoose.Types.ObjectId(userId),
+        mode: "quiz",
+        setId: { $in: setIds },
+      })
+        .select("setId score total")
+        .lean();
+      for (const a of attempts) {
+        if (Number(a.score) === Number(a.total) && a.total > 0) {
+          masteredSetIds.add(String(a.setId));
+        }
+      }
+    }
 
     const items = sets.map((set) => {
       const words = wordsMap.get(String(set._id)) || [];
@@ -700,7 +759,10 @@ const listVocabularies = async (req, res) => {
         );
         if (!matchWord && !set.name.toLowerCase().includes(q)) return null;
       }
-      return normalized;
+      return {
+        ...normalized,
+        quizMastered: masteredSetIds.has(String(set._id)),
+      };
     }).filter(Boolean);
 
     return res.status(200).json({
@@ -727,12 +789,17 @@ const getVocabularySummary = async (_req, res) => {
   try {
     const { VocabularySet: VS, Vocabulary: V, VocabularyAttempt: VA } = mongoose.models;
 
-    const totalSets = await VS.countDocuments({ isActive: true });
-    const totalWords = await V.countDocuments();
+    const catalogSets = await VS.find({ isActive: true, ownerId: null })
+      .select("_id")
+      .lean();
+    const setIds = catalogSets.map((s) => s._id);
 
-    const sets = await VS.find({ isActive: true }).select("_id").lean();
-    const setIds = sets.map((s) => s._id);
+    const totalSets = setIds.length;
+    const totalWords = setIds.length
+      ? await V.countDocuments({ setId: { $in: setIds } })
+      : 0;
 
+    // Keep existing dashboard semantics, but based on catalog-only sets.
     const masteredCount = setIds.length;
     const learningCount = Math.max(0, totalWords - masteredCount);
 
@@ -799,6 +866,7 @@ const getRecommendedVocabularies = async (req, res) => {
     // Get all vocabulary sets at target levels
     const allSets = await VocabularySet.find({
       isActive: true,
+      ownerId: null,
       level: { $in: targetLevels }
     })
       .sort({ sortOrder: 1, updatedAt: -1 })
@@ -872,6 +940,9 @@ const getRecommendedVocabularies = async (req, res) => {
 
 const getVocabularyById = async (req, res) => {
   try {
+    const { VocabularyAttempt: VA } = mongoose.models;
+    const userId = req.user?.id;
+
     const set = await VocabularySet.findById(req.params.id).lean();
 
     if (!set || !set.isActive) {
@@ -880,11 +951,15 @@ const getVocabularyById = async (req, res) => {
         message: "Vocabulary set not found",
       });
     }
+    if (!canAccessVocabularySet(set, userId)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
 
     const words = await Vocabulary.find({ setId: set._id }).lean();
 
     const relatedSets = await VocabularySet.find({
       isActive: true,
+      ownerId: null,
       _id: { $ne: set._id },
       topic: set.topic,
     })
@@ -896,10 +971,39 @@ const getVocabularyById = async (req, res) => {
       normalizeVocabularySetForUser(s, relatedWordsMap.get(String(s._id)) || [])
     );
 
+    const base = normalizeVocabularySetForUser(set, words);
+    let vocabulary = { ...base };
+
+    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+      const uid = new mongoose.Types.ObjectId(userId);
+      const user = await User.findById(userId).select("currentLevel").lean();
+      const bestQuiz = await VA.findOne({
+        setId: set._id,
+        userId: uid,
+        mode: "quiz",
+      })
+        .sort({ score: -1, percent: -1, submittedAt: -1 })
+        .lean();
+
+      const quizMastered =
+        Boolean(bestQuiz) &&
+        Number(bestQuiz.score) === Number(bestQuiz.total) &&
+        bestQuiz.total > 0;
+
+      vocabulary = {
+        ...base,
+        quizMastered,
+        bestQuizPercent: bestQuiz ? Number(bestQuiz.percent) || 0 : 0,
+        xpEligibleForSet: user
+          ? isVocabularyEligibleForXp(set.level, user.currentLevel)
+          : false,
+      };
+    }
+
     return res.status(200).json({
       success: true,
       data: {
-        vocabulary: normalizeVocabularySetForUser(set, words),
+        vocabulary,
         related,
       },
     });
@@ -913,6 +1017,7 @@ const getVocabularyById = async (req, res) => {
 
 const getVocabularyHints = async (req, res) => {
   try {
+    const userId = req.user?.id;
     const set = await VocabularySet.findById(req.params.id).lean();
 
     if (!set) {
@@ -920,6 +1025,9 @@ const getVocabularyHints = async (req, res) => {
         success: false,
         message: "Vocabulary set not found",
       });
+    }
+    if (!canAccessVocabularySet(set, userId)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
     const personalized = [
@@ -955,16 +1063,35 @@ const getVocabularyHints = async (req, res) => {
 
 const getVocabularyLeaderboard = async (req, res) => {
   try {
-    const { VocabularyAttempt: VA } = mongoose.models;
+    const { VocabularyAttempt: VA, Vocabulary: V } = mongoose.models;
+    const setId = new mongoose.Types.ObjectId(req.params.id);
+    const userId = req.user?.id;
 
-    const topAttempts = await VA.aggregate([
-      { $match: { setId: new mongoose.Types.ObjectId(req.params.id) } },
+    const set = await VocabularySet.findById(setId).select("ownerId").lean();
+    if (!set) {
+      return res.status(404).json({ success: false, message: "Vocabulary set not found" });
+    }
+    if (!canAccessVocabularySet(set, userId)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+
+    const wordCount = await V.countDocuments({ setId });
+
+    const bestPerUser = await VA.aggregate([
+      { $match: { setId, mode: "quiz" } },
+      { $sort: { userId: 1, score: -1, durationSec: 1 } },
+      {
+        $group: {
+          _id: "$userId",
+          doc: { $first: "$$ROOT" },
+        },
+      },
+      { $replaceRoot: { newRoot: "$doc" } },
       { $sort: { score: -1, durationSec: 1 } },
       { $limit: 20 },
       {
         $project: {
           _id: 0,
-          userId: 1,
           userName: 1,
           score: 1,
           durationSec: 1,
@@ -972,10 +1099,10 @@ const getVocabularyLeaderboard = async (req, res) => {
       },
     ]);
 
-    const leaderboard = topAttempts.map((item, index) => ({
+    const leaderboard = bestPerUser.map((item, index) => ({
       rank: index + 1,
       name: item.userName || "Anonymous",
-      score: item.score,
+      score: item.score ?? 0,
       durationSec: item.durationSec || 0,
     }));
 
@@ -983,7 +1110,7 @@ const getVocabularyLeaderboard = async (req, res) => {
       success: true,
       data: {
         vocabularyId: req.params.id,
-        wordCount: 0,
+        wordCount,
         leaderboard,
       },
     });
@@ -1038,6 +1165,27 @@ const getVocabularyHistory = async (req, res) => {
   }
 };
 
+const normalizeVocabMeaning = (value) =>
+  String(value ?? "")
+    .normalize("NFC")
+    .replace(/["'“”‘’]/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[.。!！?？]+$/g, "")
+    .toLowerCase();
+
+const vocabularyMeaningsMatch = (meaningFromDb, selectedLabel) => {
+  const a = normalizeVocabMeaning(meaningFromDb);
+  const b = normalizeVocabMeaning(selectedLabel);
+  if (!a.length || !b.length) {
+    return false;
+  }
+  if (a === b) {
+    return true;
+  }
+  return a.replace(/[.。]+$/g, "") === b.replace(/[.。]+$/g, "");
+};
+
 const submitVocabularyAttempt = async (req, res) => {
   try {
     const { VocabularyAttempt: VA, VocabularySet: VS } = mongoose.models;
@@ -1046,7 +1194,13 @@ const submitVocabularyAttempt = async (req, res) => {
       return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
-    const { mode, answers = [], durationSec = 0, wordIds = [] } = req.body || {};
+    const {
+      mode,
+      answers = [],
+      durationSec = 0,
+      wordIds = [],
+      selectedLabels = [],
+    } = req.body || {};
 
     if (!["flashcards", "quiz"].includes(mode)) {
       return res.status(400).json({
@@ -1062,25 +1216,121 @@ const submitVocabularyAttempt = async (req, res) => {
         message: "Vocabulary set not found",
       });
     }
+    if (!canAccessVocabularySet(set, userId)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
 
     const words = await Vocabulary.find({ setId: set._id }).lean();
-    const total = words.length;
     let score = 0;
+    let total = 0;
 
     if (mode === "flashcards") {
+      total = words.length;
       score = answers.filter((a) => a && a.correct).length;
     } else {
-      score = answers.filter((a, i) => {
-        const wordId = wordIds[i];
+      const labels = Array.isArray(selectedLabels) ? selectedLabels : [];
+      const rawAnswers = Array.isArray(answers) ? answers : [];
+
+      if (!Array.isArray(wordIds) || wordIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "wordIds is required for quiz mode",
+        });
+      }
+
+      const rows = wordIds.map((wordId, i) => {
         const word = words.find((w) => String(w._id) === String(wordId));
-        if (!word) return false;
-        const correctIndex = wordIds[i];
-        return a === correctIndex;
-      }).length;
+        const selectedIdx =
+          rawAnswers[i] === null || rawAnswers[i] === undefined
+            ? null
+            : Number(rawAnswers[i]);
+        const rawLabel = labels[i];
+        const selectedText =
+          rawLabel !== undefined && rawLabel !== null && rawLabel !== ""
+            ? String(rawLabel)
+            : "";
+        const correct =
+          Boolean(word) &&
+          selectedText.trim().length > 0 &&
+          vocabularyMeaningsMatch(word.meaning, selectedText);
+
+        return {
+          wordId: new mongoose.Types.ObjectId(wordId),
+          selectedIndex: Number.isFinite(selectedIdx) ? selectedIdx : null,
+          selectedText,
+          correct,
+        };
+      });
+
+      total = rows.length;
+      score = rows.filter((r) => r.correct).length;
+
+      const percent = total > 0 ? Math.round((score / total) * 100) : 0;
+      const resultLabel =
+        percent >= 90 ? "Excellent!" :
+          percent >= 70 ? "Good job!" :
+            percent >= 50 ? "Keep going!" :
+              "Needs more practice";
+
+      const userDoc = await User.findById(userId).select("exp currentLevel").lean();
+      const perfectScore = total > 0 && score === total;
+      const levelOk =
+        userDoc && isVocabularyEligibleForXp(set.level, userDoc.currentLevel);
+      const isPersonal = Boolean(set?.ownerId);
+      const baseXp = isPersonal ? 0 : Math.round(words.length * 2);
+      const xpAwarded = Boolean(!isPersonal && perfectScore && levelOk && baseXp > 0);
+      const earnedXp = xpAwarded ? baseXp : 0;
+
+      const attempt = await VA.create({
+        setId: set._id,
+        userId: new mongoose.Types.ObjectId(userId),
+        userName: req.user?.name || "",
+        mode,
+        answers: rows,
+        score,
+        total,
+        percent,
+        durationSec: Math.max(0, parseInt(durationSec, 10) || 0),
+        earnedXp,
+      });
+
+      let userExpAfter = userDoc ? Number(userDoc.exp) || 0 : null;
+      if (!isPersonal && xpAwarded && earnedXp > 0) {
+        const safeXp = Math.max(0, Math.floor(earnedXp));
+        if (safeXp > 0) {
+          await User.updateOne({ _id: userId }, { $inc: { exp: safeXp } });
+          userExpAfter += safeXp;
+        }
+      }
+
+      return res.status(201).json({
+        success: true,
+        data: {
+          attemptId: String(attempt._id),
+          score,
+          total,
+          percent,
+          time: attempt.durationSec,
+          earnedXp,
+          xpAwarded,
+          xpReason: isPersonal
+            ? "personal_set"
+            : xpAwarded
+              ? "perfect_level_ok"
+              : !perfectScore
+                ? "not_perfect"
+                : !levelOk
+                  ? "level_not_eligible"
+                  : "no_xp",
+          userExp: userExpAfter,
+          resultLabel,
+          answers: rawAnswers,
+        },
+      });
     }
 
     const percent = total > 0 ? Math.round((score / total) * 100) : 0;
-    const earnedXp = Math.round(score * 2);
+    const earnedXp = set?.ownerId ? 0 : Math.round(score * 2);
     const resultLabel =
       percent >= 90 ? "Excellent!" :
         percent >= 70 ? "Good job!" :
@@ -1092,11 +1342,15 @@ const submitVocabularyAttempt = async (req, res) => {
       userId: new mongoose.Types.ObjectId(userId),
       userName: req.user?.name || "",
       mode,
-      answers: answers.map((a, i) => ({
-        wordId: wordIds[i] || null,
-        selectedIndex: a ?? null,
-        correct: false,
-      })),
+      answers: answers.map((a, i) => {
+        const rawWordId = wordIds[i] ?? words[i]?._id;
+        return {
+          wordId: new mongoose.Types.ObjectId(rawWordId),
+          selectedIndex: null,
+          selectedText: "",
+          correct: !!(a && a.correct),
+        };
+      }),
       score,
       total,
       percent,
@@ -1140,6 +1394,9 @@ const getVocabularyReview = async (req, res) => {
         success: false,
         message: "Vocabulary set not found",
       });
+    }
+    if (!canAccessVocabularySet(set, userId)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
     const words = await Vocabulary.find({ setId: set._id }).lean();

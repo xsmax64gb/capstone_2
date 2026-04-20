@@ -1,3 +1,4 @@
+// Đề kiểm tra trình độ (questions, skill types, difficulty rules, scoring)
 import mongoose from "mongoose";
 
 import { LEVELS, PLACEMENT_SKILL_TYPES } from "./constants.js";
@@ -109,6 +110,16 @@ const placementTestSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+    },
+    levelFrom: {
+      type: String,
+      enum: LEVELS,
+      default: "A1",
+    },
+    levelTo: {
+      type: String,
+      enum: LEVELS,
+      default: "C2",
     },
     description: {
       type: String,
