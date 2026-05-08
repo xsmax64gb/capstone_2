@@ -142,6 +142,10 @@ const normalizeQuestion = (question, index) => {
         correctIndex = found >= 0 ? found : 0;
     }
 
+    if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= options.length) {
+        correctIndex = 0;
+    }
+
     return {
         id: String(question?._id || `q_${index + 1}`),
         prompt: question?.prompt || question?.question || "",
@@ -237,7 +241,9 @@ const parseStructuredArray = (value, fieldName) => {
                 return parsed;
             }
         } catch {
-            throw new Error(`${fieldName} must be a valid JSON array`);
+            const error = new Error(`${fieldName} must be a valid JSON array`);
+            error.statusCode = 400;
+            throw error;
         }
     }
 
@@ -245,7 +251,96 @@ const parseStructuredArray = (value, fieldName) => {
         return [];
     }
 
-    throw new Error(`${fieldName} must be an array`);
+    const error = new Error(`${fieldName} must be an array`);
+    error.statusCode = 400;
+    throw error;
+};
+
+const createValidationError = (message) => {
+    const error = new Error(message);
+    error.statusCode = 400;
+    return error;
+};
+
+const normalizeQuestionOptions = (value, index) => {
+    const options = Array.isArray(value) ? value : parseStringArray(value);
+    const normalizedOptions = options
+        .map((item) => String(item ?? "").trim())
+        .filter(Boolean);
+
+    if (normalizedOptions.length < 2) {
+        throw createValidationError(`questions[${index}].options must contain at least 2 options`);
+    }
+
+    return normalizedOptions;
+};
+
+const resolveQuestionCorrectIndex = (question, options, index) => {
+    const rawCorrectIndex = question?.correctIndex ?? question?.answerIndex;
+    if (rawCorrectIndex !== undefined && rawCorrectIndex !== null && rawCorrectIndex !== "") {
+        const parsedIndex = Number(rawCorrectIndex);
+        if (
+            Number.isInteger(parsedIndex) &&
+            parsedIndex >= 0 &&
+            parsedIndex < options.length
+        ) {
+            return parsedIndex;
+        }
+
+        throw createValidationError(`questions[${index}].correctIndex is out of range`);
+    }
+
+    const rawCorrectAnswer =
+        question?.correctAnswer ?? question?.answer ?? question?.correctOption;
+    if (typeof rawCorrectAnswer === "number") {
+        if (Number.isInteger(rawCorrectAnswer) && rawCorrectAnswer >= 0 && rawCorrectAnswer < options.length) {
+            return rawCorrectAnswer;
+        }
+        throw createValidationError(`questions[${index}].correctAnswer index is out of range`);
+    }
+
+    const normalizedCorrectAnswer = String(rawCorrectAnswer ?? "").trim();
+    if (!normalizedCorrectAnswer) {
+        throw createValidationError(`questions[${index}].correctAnswer is required`);
+    }
+
+    const found = options.findIndex(
+        (option) => option.trim().toLowerCase() === normalizedCorrectAnswer.toLowerCase()
+    );
+    if (found >= 0) {
+        return found;
+    }
+
+    throw createValidationError(`questions[${index}].correctAnswer must match one option`);
+};
+
+const normalizeExerciseQuestionsPayload = (value, fieldName = "questions") => {
+    const rawQuestions = parseStructuredArray(value, fieldName);
+
+    if (rawQuestions.length === 0) {
+        throw createValidationError("At least one question is required");
+    }
+
+    return rawQuestions.map((question, zeroIndex) => {
+        const index = zeroIndex + 1;
+        const prompt = String(question?.prompt ?? question?.question ?? "").trim();
+        if (!prompt) {
+            throw createValidationError(`questions[${index}].prompt is required`);
+        }
+
+        const options = normalizeQuestionOptions(question?.options, index);
+        const correctIndex = resolveQuestionCorrectIndex(question, options, index);
+
+        return {
+            prompt,
+            question: prompt,
+            options,
+            correctIndex,
+            correctAnswer: options[correctIndex],
+            explanation: String(question?.explanation ?? "").trim(),
+            score: Math.max(1, toSafeInt(question?.score, 1)),
+        };
+    });
 };
 
 const toIsoDate = (value) => {
@@ -426,6 +521,67 @@ const listExercises = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: error.message || "Failed to fetch exercises",
+        });
+    }
+};
+
+const getExerciseFilters = async (req, res) => {
+    try {
+        const all = await getExercises();
+        const userId = req.user?.id;
+        const personalOnly = String(req.query?.personal || "").toLowerCase() === "true";
+
+        const accessible = all.filter((item) => {
+            if (!canAccessExercise(item, userId)) {
+                return false;
+            }
+            return !personalOnly || item.isPersonal;
+        });
+
+        const levelCounts = new Map(LEVEL_ORDER.map((level) => [level, 0]));
+        const topicCounts = new Map();
+        const typeCounts = new Map();
+
+        accessible.forEach((item) => {
+            const level = String(item.level || "").toUpperCase();
+            if (LEVEL_ORDER.includes(level)) {
+                levelCounts.set(level, (levelCounts.get(level) || 0) + 1);
+            }
+
+            const topic = String(item.topic || "general").trim() || "general";
+            topicCounts.set(topic, (topicCounts.get(topic) || 0) + 1);
+
+            const type = String(item.type || "").trim();
+            if (type) {
+                typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
+            }
+        });
+
+        const topics = Array.from(topicCounts.entries())
+            .map(([value, count]) => ({ value, label: value, count }))
+            .sort((a, b) => a.label.localeCompare(b.label, "vi"));
+
+        const types = Array.from(typeCounts.entries())
+            .map(([value, count]) => ({ value, label: value, count }))
+            .sort((a, b) => a.label.localeCompare(b.label, "vi"));
+
+        return res.status(200).json({
+            success: true,
+            message: "Exercise filters fetched successfully",
+            data: {
+                levels: LEVEL_ORDER.map((level) => ({
+                    value: level,
+                    label: level,
+                    count: levelCounts.get(level) || 0,
+                })),
+                topics,
+                types,
+            },
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to fetch exercise filters",
         });
     }
 };
@@ -1139,6 +1295,7 @@ const createAdminExercise = async (req, res) => {
         }
 
         const coverImage = await resolveCoverImage(req);
+        const normalizedQuestions = normalizeExerciseQuestionsPayload(questions);
 
         const exercise = await Exercise.create({
             title: String(title).trim(),
@@ -1150,7 +1307,8 @@ const createAdminExercise = async (req, res) => {
             skills: parseStringArray(skills),
             durationMinutes: Number(durationMinutes) || 8,
             rewardsXp: Number(rewardsXp) || 0,
-            questions: parseStructuredArray(questions, "questions"),
+            questionCount: normalizedQuestions.length,
+            questions: normalizedQuestions,
         });
 
         return res.status(201).json({
@@ -1159,7 +1317,7 @@ const createAdminExercise = async (req, res) => {
             data: serializeExercise(exercise.toObject()),
         });
     } catch (error) {
-        return res.status(500).json({
+        return res.status(error.statusCode || 500).json({
             success: false,
             message: error.message || "Failed to create exercise",
         });
@@ -1191,7 +1349,9 @@ const updateAdminExercise = async (req, res) => {
         if (payload.durationMinutes !== undefined) exercise.durationMinutes = Number(payload.durationMinutes) || 8;
         if (payload.rewardsXp !== undefined) exercise.rewardsXp = Number(payload.rewardsXp) || 0;
         if (payload.questions !== undefined) {
-            exercise.questions = parseStructuredArray(payload.questions, "questions");
+            const normalizedQuestions = normalizeExerciseQuestionsPayload(payload.questions);
+            exercise.questions = normalizedQuestions;
+            exercise.questionCount = normalizedQuestions.length;
         }
 
         await exercise.save();
@@ -1202,7 +1362,7 @@ const updateAdminExercise = async (req, res) => {
             data: serializeExercise(exercise.toObject()),
         });
     } catch (error) {
-        return res.status(500).json({
+        return res.status(error.statusCode || 500).json({
             success: false,
             message: error.message || "Failed to update exercise",
         });
@@ -1237,6 +1397,7 @@ export {
     deleteAdminExercise,
     getAdminExercises,
     getExerciseById,
+    getExerciseFilters,
     getExerciseHints,
     getExerciseHistory,
     getExerciseLeaderboard,

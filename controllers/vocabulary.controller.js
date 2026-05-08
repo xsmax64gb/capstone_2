@@ -785,6 +785,66 @@ const listVocabularies = async (req, res) => {
   }
 };
 
+const getVocabularyFilters = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const personalOnly = String(req.query?.personal || "").toLowerCase() === "true";
+    const filter = personalOnly
+      ? { isActive: true, ownerId: new mongoose.Types.ObjectId(userId) }
+      : {
+        isActive: true,
+        $or: [
+          { ownerId: null },
+          { ownerId: { $exists: false } },
+          { ownerId: new mongoose.Types.ObjectId(userId) },
+        ],
+      };
+
+    const sets = await VocabularySet.find(filter)
+      .select("level topic")
+      .lean();
+
+    const levelCounts = new Map(LEVEL_ORDER.map((level) => [level, 0]));
+    const topicCounts = new Map();
+
+    sets.forEach((set) => {
+      const level = String(set.level || "").toUpperCase();
+      if (LEVEL_ORDER.includes(level)) {
+        levelCounts.set(level, (levelCounts.get(level) || 0) + 1);
+      }
+
+      const topic = String(set.topic || "general").trim() || "general";
+      topicCounts.set(topic, (topicCounts.get(topic) || 0) + 1);
+    });
+
+    const topics = Array.from(topicCounts.entries())
+      .map(([value, count]) => ({ value, label: value, count }))
+      .sort((a, b) => a.label.localeCompare(b.label, "vi"));
+
+    return res.status(200).json({
+      success: true,
+      message: "Vocabulary filters fetched successfully",
+      data: {
+        levels: LEVEL_ORDER.map((level) => ({
+          value: level,
+          label: level,
+          count: levelCounts.get(level) || 0,
+        })),
+        topics,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch vocabulary filters",
+    });
+  }
+};
+
 const getVocabularySummary = async (_req, res) => {
   try {
     const { VocabularySet: VS, Vocabulary: V, VocabularyAttempt: VA } = mongoose.models;
@@ -1186,6 +1246,35 @@ const vocabularyMeaningsMatch = (meaningFromDb, selectedLabel) => {
   return a.replace(/[.。]+$/g, "") === b.replace(/[.。]+$/g, "");
 };
 
+const normalizeQuizQuestionSnapshot = (snapshot) => {
+  const wordId = String(snapshot?.wordId ?? snapshot?.id ?? "").trim();
+  const options = Array.isArray(snapshot?.options)
+    ? snapshot.options.map((option) => String(option ?? "").trim()).filter(Boolean)
+    : [];
+  const correctIndex = Number(snapshot?.correctIndex);
+
+  return {
+    wordId,
+    prompt: String(snapshot?.prompt ?? "").trim(),
+    options,
+    correctIndex:
+      Number.isInteger(correctIndex) && correctIndex >= 0 && correctIndex < options.length
+        ? correctIndex
+        : null,
+    explanation: String(snapshot?.explanation ?? "").trim(),
+  };
+};
+
+const buildQuizSnapshotMap = (questionSnapshots) => {
+  const snapshots = Array.isArray(questionSnapshots) ? questionSnapshots : [];
+  return new Map(
+    snapshots
+      .map(normalizeQuizQuestionSnapshot)
+      .filter((snapshot) => snapshot.wordId)
+      .map((snapshot) => [snapshot.wordId, snapshot])
+  );
+};
+
 const submitVocabularyAttempt = async (req, res) => {
   try {
     const { VocabularyAttempt: VA, VocabularySet: VS } = mongoose.models;
@@ -1200,6 +1289,7 @@ const submitVocabularyAttempt = async (req, res) => {
       durationSec = 0,
       wordIds = [],
       selectedLabels = [],
+      questionSnapshots = [],
     } = req.body || {};
 
     if (!["flashcards", "quiz"].includes(mode)) {
@@ -1238,19 +1328,41 @@ const submitVocabularyAttempt = async (req, res) => {
         });
       }
 
+      const snapshotByWordId = buildQuizSnapshotMap(questionSnapshots);
+
       const rows = wordIds.map((wordId, i) => {
         const word = words.find((w) => String(w._id) === String(wordId));
+        if (!word || !mongoose.Types.ObjectId.isValid(wordId)) {
+          const error = new Error("wordIds must contain words from this vocabulary set");
+          error.statusCode = 400;
+          throw error;
+        }
+
+        const snapshot = snapshotByWordId.get(String(wordId));
+        const snapshotOptions = Array.isArray(snapshot?.options) ? snapshot.options : [];
         const selectedIdx =
           rawAnswers[i] === null || rawAnswers[i] === undefined
             ? null
             : Number(rawAnswers[i]);
         const rawLabel = labels[i];
-        const selectedText =
-          rawLabel !== undefined && rawLabel !== null && rawLabel !== ""
-            ? String(rawLabel)
+        const selectedTextFromSnapshot =
+          Number.isInteger(selectedIdx) &&
+            selectedIdx >= 0 &&
+            selectedIdx < snapshotOptions.length
+            ? snapshotOptions[selectedIdx]
             : "";
+        const selectedText =
+          selectedTextFromSnapshot ||
+          (rawLabel !== undefined && rawLabel !== null && rawLabel !== ""
+            ? String(rawLabel)
+            : "");
+        const correctIndex =
+          snapshot?.correctIndex !== null && snapshot?.correctIndex !== undefined
+            ? snapshot.correctIndex
+            : snapshotOptions.findIndex((option) =>
+              vocabularyMeaningsMatch(word.meaning, option)
+            );
         const correct =
-          Boolean(word) &&
           selectedText.trim().length > 0 &&
           vocabularyMeaningsMatch(word.meaning, selectedText);
 
@@ -1258,6 +1370,11 @@ const submitVocabularyAttempt = async (req, res) => {
           wordId: new mongoose.Types.ObjectId(wordId),
           selectedIndex: Number.isFinite(selectedIdx) ? selectedIdx : null,
           selectedText,
+          prompt: snapshot?.prompt || `What does "${word.word}" mean?`,
+          options: snapshotOptions,
+          correctIndex: correctIndex >= 0 ? correctIndex : null,
+          correctText: word.meaning,
+          explanation: word.example ? `Example: ${word.example}` : "",
           correct,
         };
       });
@@ -1372,7 +1489,7 @@ const submitVocabularyAttempt = async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
       message: error.message || "Failed to submit vocabulary attempt",
     });
@@ -1382,7 +1499,7 @@ const submitVocabularyAttempt = async (req, res) => {
 const getVocabularyReview = async (req, res) => {
   try {
     const { VocabularyAttempt: VA } = mongoose.models;
-    const { answers: rawAnswers } = req.query || {};
+    const { answers: rawAnswers, attemptId } = req.query || {};
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ success: false, message: "Unauthorized" });
@@ -1400,6 +1517,69 @@ const getVocabularyReview = async (req, res) => {
     }
 
     const words = await Vocabulary.find({ setId: set._id }).lean();
+    const wordById = new Map(words.map((word) => [String(word._id), word]));
+
+    if (attemptId && mongoose.Types.ObjectId.isValid(attemptId)) {
+      const attempt = await VA.findOne({
+        _id: new mongoose.Types.ObjectId(attemptId),
+        setId: set._id,
+        userId: new mongoose.Types.ObjectId(userId),
+        mode: "quiz",
+      }).lean();
+
+      if (attempt) {
+        const review = (attempt.answers || []).map((answer, index) => {
+          const word = wordById.get(String(answer.wordId));
+          const options = Array.isArray(answer.options) && answer.options.length > 0
+            ? answer.options
+            : [
+              word?.meaning || answer.correctText || "",
+              ...words
+                .filter((item) => String(item._id) !== String(answer.wordId))
+                .map((item) => item.meaning)
+                .slice(0, 3),
+            ].filter(Boolean);
+
+          while (options.length < 4) options.push("Không có trong danh sách");
+          options.length = 4;
+
+          const correctIndex =
+            Number.isInteger(answer.correctIndex) && answer.correctIndex >= 0
+              ? answer.correctIndex
+              : options.findIndex((option) =>
+                vocabularyMeaningsMatch(word?.meaning || answer.correctText, option)
+              );
+          const selectedIndex =
+            Number.isInteger(answer.selectedIndex) ? answer.selectedIndex : -1;
+
+          return {
+            wordId: String(answer.wordId),
+            word: word?.word || "",
+            prompt: answer.prompt || `What does "${word?.word || `word ${index + 1}`}" mean?`,
+            options,
+            selectedIndex,
+            selectedText: answer.selectedText || (
+              selectedIndex >= 0 && selectedIndex < options.length
+                ? options[selectedIndex]
+                : null
+            ),
+            correctIndex: correctIndex >= 0 ? correctIndex : 0,
+            correctText: answer.correctText || word?.meaning || options[correctIndex] || "",
+            isCorrect: Boolean(answer.correct),
+            explanation: answer.explanation || (word?.example ? `Example: ${word.example}` : ""),
+          };
+        });
+
+        return res.status(200).json({
+          success: true,
+          data: {
+            vocabularyId: String(set._id),
+            attemptId: String(attempt._id),
+            review,
+          },
+        });
+      }
+    }
 
     let userAnswers = [];
     if (typeof rawAnswers === "string" && rawAnswers) {
@@ -1459,6 +1639,7 @@ export {
   updateAdminVocabularyWord,
   // user-facing
   listVocabularies,
+  getVocabularyFilters,
   getVocabularySummary,
   getRecommendedVocabularies,
   getVocabularyById,

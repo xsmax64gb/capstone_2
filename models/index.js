@@ -15,8 +15,6 @@ import UserMapProgress from "./user-map-progress.model.js";
 import LearnConversation from "./learn-conversation.model.js";
 import LearnMessage from "./learn-message.model.js";
 import BossBattle from "./boss-battle.model.js";
-import LearnAchievement from "./learn-achievement.model.js";
-import UserLearnAchievement from "./user-learn-achievement.model.js";
 import Payment from "./payment.model.js";
 import PaymentPricing from "./payment-pricing.model.js";
 import InboxNotification from "./inbox-notification.model.js";
@@ -44,8 +42,6 @@ export {
   LearnConversation,
   LearnMessage,
   BossBattle,
-  LearnAchievement,
-  UserLearnAchievement,
   Payment,
   PaymentPricing,
   InboxNotification,

@@ -9,6 +9,7 @@ import {
     patchPaymentPackage,
     postPaymentPackage,
     reconcilePayment,
+    removePaymentPackage,
     syncPayments,
     verifyPayment,
 } from "../controllers/payment.controller.js";
@@ -31,6 +32,12 @@ router.patch(
     requireAuth,
     requireAdmin,
     patchPaymentPackage
+);
+router.delete(
+    "/payment-packages/:packageId",
+    requireAuth,
+    requireAdmin,
+    removePaymentPackage
 );
 
 export default router;

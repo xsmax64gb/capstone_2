@@ -9,6 +9,7 @@ import {
     generateExerciseAiFromPrompt,
     getAdminExercises,
     getExerciseById,
+    getExerciseFilters,
     getExerciseHints,
     getExerciseHistory,
     getExerciseLeaderboard,
@@ -90,6 +91,12 @@ router.get(
     "/exercises",
     requireFeatureQuota("exercise_library"),
     listExercises
+);
+
+router.get(
+    "/exercises/filters",
+    requireFeatureQuota("exercise_library"),
+    getExerciseFilters
 );
 
 /**

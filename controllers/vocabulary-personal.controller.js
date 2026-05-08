@@ -32,6 +32,38 @@ const ensureAuthUserId = (req) => {
   return userId;
 };
 
+const normalizeVocabularyItemsForSave = (items) => {
+  const rows = [];
+  const errors = [];
+  const seenWords = new Set();
+
+  items.forEach((row, index) => {
+    const word = normalizeTrim(row?.word);
+    const meaning = normalizeTrim(row?.meaning);
+    const key = word.toLowerCase();
+
+    if (!word || !meaning) {
+      errors.push(`Line ${index + 1}: word and meaning are required`);
+      return;
+    }
+
+    if (seenWords.has(key)) {
+      errors.push(`Line ${index + 1}: duplicate word "${word}"`);
+      return;
+    }
+
+    seenWords.add(key);
+    rows.push({
+      word,
+      meaning,
+      phonetic: normalizeTrim(row?.pronunciation ?? row?.phonetic),
+      example: normalizeTrim(row?.example),
+    });
+  });
+
+  return { rows, errors };
+};
+
 export const generatePersonalVocabularyFromPrompt = async (req, res) => {
   try {
     const userId = ensureAuthUserId(req);
@@ -140,6 +172,14 @@ export const createPersonalVocabularySetManual = async (req, res) => {
     if (items.length === 0) {
       return res.status(400).json({ success: false, message: "No vocabulary items found" });
     }
+    const { rows, errors: validationErrors } = normalizeVocabularyItemsForSave(items);
+    if (validationErrors.length > 0 || rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid vocabulary items",
+        data: { errors: validationErrors },
+      });
+    }
 
     const level = LEVELS.includes(b.level) ? b.level : "A1";
     const topic = normalizeTrim(b.topic) || "general";
@@ -164,12 +204,12 @@ export const createPersonalVocabularySetManual = async (req, res) => {
       },
     });
 
-    const docs = items.map((row) => ({
+    const docs = rows.map((row) => ({
       setId: set._id,
-      word: normalizeTrim(row.word),
-      meaning: normalizeTrim(row.meaning),
-      phonetic: normalizeTrim(row.pronunciation),
-      example: normalizeTrim(row.example),
+      word: row.word,
+      meaning: row.meaning,
+      phonetic: row.phonetic,
+      example: row.example,
     }));
 
     await Vocabulary.insertMany(docs, { ordered: false });
@@ -208,6 +248,14 @@ export const createPersonalVocabularySetFromAi = async (req, res) => {
     if (items.length === 0) {
       return res.status(400).json({ success: false, message: "items is required" });
     }
+    const { rows, errors: validationErrors } = normalizeVocabularyItemsForSave(items);
+    if (validationErrors.length > 0 || rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid vocabulary items",
+        data: { errors: validationErrors },
+      });
+    }
 
     const level = LEVELS.includes(b.level) ? b.level : "A1";
     const topic = normalizeTrim(b.topic) || "general";
@@ -233,12 +281,12 @@ export const createPersonalVocabularySetFromAi = async (req, res) => {
       },
     });
 
-    const docs = items.map((row) => ({
+    const docs = rows.map((row) => ({
       setId: set._id,
-      word: normalizeTrim(row.word),
-      meaning: normalizeTrim(row.meaning),
-      phonetic: normalizeTrim(row.pronunciation ?? row.phonetic),
-      example: normalizeTrim(row.example),
+      word: row.word,
+      meaning: row.meaning,
+      phonetic: row.phonetic,
+      example: row.example,
     }));
 
     await Vocabulary.insertMany(docs, { ordered: false });
@@ -286,14 +334,23 @@ export const updatePersonalVocabularySet = async (req, res) => {
     await set.save();
 
     if (Array.isArray(b.words)) {
+      const { rows, errors: validationErrors } = normalizeVocabularyItemsForSave(b.words);
+      if (validationErrors.length > 0 || rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid vocabulary items",
+          data: { errors: validationErrors },
+        });
+      }
+
       // Replace all words for simplicity (personal sets only).
       await Vocabulary.deleteMany({ setId: set._id });
-      const docs = b.words.map((row) => ({
+      const docs = rows.map((row) => ({
         setId: set._id,
-        word: normalizeTrim(row.word),
-        meaning: normalizeTrim(row.meaning),
-        phonetic: normalizeTrim(row.pronunciation ?? row.phonetic),
-        example: normalizeTrim(row.example),
+        word: row.word,
+        meaning: row.meaning,
+        phonetic: row.phonetic,
+        example: row.example,
       }));
       await Vocabulary.insertMany(docs, { ordered: false });
     }
@@ -328,4 +385,3 @@ export const deletePersonalVocabularySet = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message || "Failed to delete set" });
   }
 };
-

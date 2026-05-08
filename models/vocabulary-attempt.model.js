@@ -41,6 +41,26 @@ const vocabularyAttemptSchema = new mongoose.Schema(
             type: String,
             default: "",
           },
+          prompt: {
+            type: String,
+            default: "",
+          },
+          options: {
+            type: [String],
+            default: [],
+          },
+          correctIndex: {
+            type: Number,
+            default: null,
+          },
+          correctText: {
+            type: String,
+            default: "",
+          },
+          explanation: {
+            type: String,
+            default: "",
+          },
           correct: {
             type: Boolean,
             required: true,
