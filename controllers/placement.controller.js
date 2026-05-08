@@ -4,6 +4,7 @@ import {
   PlacementAttempt,
   PlacementTest,
   User,
+  UserLevel,
   UserProgress,
 } from "../models/index.js";
 import { sanitizeUser } from "../helper/auth.helper.js";
@@ -11,6 +12,10 @@ import { postOpenAiChatCompletion } from "../helper/openai.helper.js";
 import { uploadBufferToCloudinary } from "../helper/upload.helper.js";
 import { LEVELS, PLACEMENT_SKILL_TYPES } from "../models/constants.js";
 import { createInboxNotificationForUser } from "../services/inbox-notification.service.js";
+import {
+  calculateLevelThreshold,
+  getLevelStartThreshold,
+} from "../services/level-manager.service.js";
 
 const DEFAULT_LEVEL = "A1";
 const DEFAULT_SKILL = "grammar";
@@ -863,6 +868,12 @@ const applyPlacementForUser = async ({
   user.onboardingDone = true;
   user.placementScore = Math.max(0, Math.round(toFiniteNumber(placementScore, 0)));
   user.placementCompletedAt = new Date();
+  const levelNumber = getLevelIndex(normalizedLevel) + 1;
+  const baselineXp = getLevelStartThreshold(levelNumber);
+  const currentXp = Math.max(0, Number(user.exp || 0));
+  if (currentXp < baselineXp) {
+    user.exp = baselineXp;
+  }
   await user.save();
 
   try {
@@ -882,6 +893,31 @@ const applyPlacementForUser = async ({
       $set: {
         currentLevel: normalizedLevel,
         unlockedLevels: getLevelsUpTo(normalizedLevel),
+      },
+      $setOnInsert: {
+        userId,
+      },
+    },
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true,
+    }
+  );
+
+  await UserLevel.findOneAndUpdate(
+    { userId },
+    {
+      $set: {
+        currentLevel: levelNumber,
+        totalXp: Math.max(currentXp, baselineXp),
+        nextLevelThreshold:
+          levelNumber < LEVELS.length
+            ? calculateLevelThreshold(levelNumber + 1)
+            : calculateLevelThreshold(levelNumber),
+        testAvailable: false,
+        lastTestAttemptAt: null,
+        xpAtLastFailedTest: null,
       },
       $setOnInsert: {
         userId,

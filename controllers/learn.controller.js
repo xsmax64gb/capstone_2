@@ -1,14 +1,12 @@
 import mongoose from "mongoose";
 
 import {
-  LearnAchievement,
   LearnConversation,
   LearnMessage,
   Map as LearnMap,
   Step,
   UserMapProgress,
 } from "../models/index.js";
-import { listUserAchievements } from "../services/learn-achievement.service.js";
 import {
   endConversation,
   evaluateLearnMessage,
@@ -651,29 +649,7 @@ export const getLearnConversation = async (req, res) => {
   }
 };
 
-export const getMyLearnAchievements = async (req, res) => {
-  try {
-    if (!req.user?.id) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
-    const rows = await listUserAchievements(req.user.id);
-    const items = rows.map((r) => ({
-      earnedAt: r.earnedAt,
-      achievement: r.achievementId
-        ? {
-          key: r.achievementId.key,
-          title: r.achievementId.title,
-          description: r.achievementId.description,
-          iconUrl: r.achievementId.iconUrl,
-          xpReward: r.achievementId.xpReward,
-        }
-        : null,
-    }));
-    return res.json({ success: true, data: { items } });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
+
 
 // --- Admin maps ---
 
@@ -993,105 +969,4 @@ export const adminDeleteStep = async (req, res) => {
   }
 };
 
-// --- Admin achievements ---
 
-export const adminListAchievements = async (_req, res) => {
-  try {
-    const items = await LearnAchievement.find({}).sort({ createdAt: -1 }).lean();
-    return res.json({
-      success: true,
-      data: {
-        items: items.map((a) => ({
-          id: toId(a),
-          key: a.key,
-          title: a.title,
-          description: a.description,
-          iconUrl: a.iconUrl,
-          trigger: a.trigger,
-          xpReward: a.xpReward,
-        })),
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-export const adminCreateAchievement = async (req, res) => {
-  try {
-    const b = req.body;
-    if (!b.key || !b.title) {
-      return res.status(400).json({ success: false, message: "key and title required" });
-    }
-    const a = await LearnAchievement.create({
-      key: String(b.key).trim(),
-      title: String(b.title).trim(),
-      description: b.description || "",
-      iconUrl: b.iconUrl || "",
-      trigger: b.trigger || "",
-      xpReward: Number(b.xpReward) || 0,
-    });
-    return res.status(201).json({
-      success: true,
-      data: {
-        achievement: {
-          id: toId(a),
-          key: a.key,
-          title: a.title,
-          description: a.description,
-          iconUrl: a.iconUrl,
-          trigger: a.trigger,
-          xpReward: a.xpReward,
-        },
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-export const adminUpdateAchievement = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const b = req.body;
-    const a = await LearnAchievement.findByIdAndUpdate(
-      id,
-      {
-        ...(b.key !== undefined && { key: String(b.key).trim() }),
-        ...(b.title !== undefined && { title: String(b.title).trim() }),
-        ...(b.description !== undefined && { description: b.description }),
-        ...(b.iconUrl !== undefined && { iconUrl: b.iconUrl }),
-        ...(b.trigger !== undefined && { trigger: b.trigger }),
-        ...(b.xpReward !== undefined && { xpReward: Number(b.xpReward) }),
-      },
-      { new: true }
-    ).lean();
-    if (!a) return res.status(404).json({ success: false, message: "Not found" });
-    return res.json({
-      success: true,
-      data: {
-        achievement: {
-          id: toId(a),
-          key: a.key,
-          title: a.title,
-          description: a.description,
-          iconUrl: a.iconUrl,
-          trigger: a.trigger,
-          xpReward: a.xpReward,
-        },
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-export const adminDeleteAchievement = async (req, res) => {
-  try {
-    const { id } = req.params;
-    await LearnAchievement.findByIdAndDelete(id);
-    return res.json({ success: true, message: "Deleted" });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};

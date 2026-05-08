@@ -21,7 +21,6 @@ import {
   unlockMapsAfterPrerequisiteCompleted,
 } from "./learn-map-progress.service.js";
 import { createInboxNotificationForUser } from "./inbox-notification.service.js";
-import { tryGrantFirstBossWin } from "./learn-achievement.service.js";
 import {
   getMapRequiredXP,
   getStepMinimumAverageTurnScore,
@@ -576,9 +575,7 @@ export async function endConversation(userId, conversationId) {
       }
     }
 
-    if (step.type === "boss" && bossWin) {
-      await tryGrantFirstBossWin(userId);
-    }
+    // No achievement system anymore
   } else if (!passed && step.type === "boss" && !isReplayAttempt) {
     progress.bossAttempts = (progress.bossAttempts || 0) + 1;
     progress.updatedAt = new Date();

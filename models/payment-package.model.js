@@ -92,6 +92,10 @@ const paymentPackageSchema = new mongoose.Schema(
             type: Number,
             default: 0,
         },
+        deletedAt: {
+            type: Date,
+            default: null,
+        },
     },
     {
         collection: "payment_packages",
@@ -108,6 +112,7 @@ paymentPackageSchema.index(
     }
 );
 paymentPackageSchema.index({ isActive: 1, displayOrder: 1, price: 1 });
+paymentPackageSchema.index({ deletedAt: 1 });
 
 export { FEATURE_SCOPE_PERIODS, PAYMENT_PACKAGE_BILLING_CYCLES };
 

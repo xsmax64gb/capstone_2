@@ -4,6 +4,7 @@ import PaymentPackage, {
     FEATURE_SCOPE_PERIODS,
     PAYMENT_PACKAGE_BILLING_CYCLES,
 } from "../models/payment-package.model.js";
+import Payment from "../models/payment.model.js";
 
 const MAX_ACTIVE_PAYMENT_PACKAGES = 3;
 const MIN_PAID_PACKAGE_PRICE = 2000;
@@ -148,6 +149,9 @@ const FEATURE_SCOPE_PRESETS_BY_TIER = {
 const PAYMENT_PACKAGE_FEATURE_LOOKUP = new Set(
     PAYMENT_PACKAGE_FEATURE_CATALOG.map((item) => item.key)
 );
+const NOT_DELETED_FILTER = {
+    $or: [{ deletedAt: null }, { deletedAt: { $exists: false } }],
+};
 
 const buildActiveLimitExceededError = ({ operation, activeCount }) => {
     const normalizedOperation = normalizeTrimmedString(operation).toLowerCase();
@@ -485,6 +489,7 @@ const ensureActiveLimit = async ({
     const filter = {
         isActive: true,
         slug: { $ne: DEFAULT_FREE_PACKAGE_SLUG },
+        ...NOT_DELETED_FILTER,
     };
     if (excludeId && mongoose.Types.ObjectId.isValid(excludeId)) {
         filter._id = { $ne: new mongoose.Types.ObjectId(excludeId) };
@@ -583,7 +588,9 @@ const buildPaymentPackagePayload = (input = {}) => {
 };
 
 const listPaymentPackages = async ({ includeInactive = false } = {}) => {
-    const filter = includeInactive ? {} : { isActive: true };
+    const filter = includeInactive
+        ? { ...NOT_DELETED_FILTER }
+        : { isActive: true, ...NOT_DELETED_FILTER };
     const packages = await PaymentPackage.find(filter)
         .sort({ displayOrder: 1, price: 1, name: 1 })
         .lean();
@@ -618,7 +625,10 @@ const updatePaymentPackage = async (packageId, input = {}) => {
         throw new Error("Invalid payment package id");
     }
 
-    const existing = await PaymentPackage.findById(normalizedId);
+    const existing = await PaymentPackage.findOne({
+        _id: new mongoose.Types.ObjectId(normalizedId),
+        ...NOT_DELETED_FILTER,
+    });
     if (!existing) {
         throw new Error("Payment package not found");
     }
@@ -681,6 +691,60 @@ const updatePaymentPackage = async (packageId, input = {}) => {
     return mapPaymentPackageDoc(existing);
 };
 
+const deletePaymentPackage = async (packageId) => {
+    const normalizedId = normalizeTrimmedString(packageId);
+    if (!mongoose.Types.ObjectId.isValid(normalizedId)) {
+        throw new Error("Invalid payment package id");
+    }
+
+    const existing = await PaymentPackage.findOne({
+        _id: new mongoose.Types.ObjectId(normalizedId),
+        ...NOT_DELETED_FILTER,
+    });
+    if (!existing) {
+        throw new Error("Payment package not found");
+    }
+
+    const existingIsDefault = isDefaultPackageIdentity({
+        slug: existing.slug,
+        price: existing.price,
+        isDefault: existing.isDefault,
+    });
+    if (existingIsDefault) {
+        throw new Error("Default free package cannot be deleted");
+    }
+
+    const usageCount = await Payment.countDocuments({
+        $or: [
+            { packageId: existing._id },
+            { packageSlug: existing.slug },
+            { pricingKey: existing.slug },
+        ],
+    });
+
+    if (usageCount > 0) {
+        existing.isActive = false;
+        existing.deletedAt = new Date();
+        await existing.save();
+
+        return {
+            deleted: true,
+            mode: "soft",
+            usageCount,
+            package: mapPaymentPackageDoc(existing),
+        };
+    }
+
+    await PaymentPackage.deleteOne({ _id: existing._id });
+
+    return {
+        deleted: true,
+        mode: "hard",
+        usageCount: 0,
+        packageId: String(existing._id),
+    };
+};
+
 const getPaymentPackageBySelector = async ({
     packageId,
     packageSlug,
@@ -696,6 +760,7 @@ const getPaymentPackageBySelector = async ({
         found = await PaymentPackage.findOne({
             _id: new mongoose.Types.ObjectId(normalizedId),
             ...filter,
+            ...NOT_DELETED_FILTER,
         }).lean();
     }
 
@@ -703,6 +768,7 @@ const getPaymentPackageBySelector = async ({
         found = await PaymentPackage.findOne({
             slug: normalizedSlug,
             ...filter,
+            ...NOT_DELETED_FILTER,
         }).lean();
     }
 
@@ -713,6 +779,7 @@ export {
     FEATURE_ACCESS_LEVEL_OPTIONS,
     MAX_ACTIVE_PAYMENT_PACKAGES,
     createPaymentPackage,
+    deletePaymentPackage,
     getPaymentPackageBySelector,
     getPaymentPackageFeatureCatalog,
     getPaymentPackagesCatalog,

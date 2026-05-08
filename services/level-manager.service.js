@@ -13,21 +13,12 @@ const LEVEL_NAMES = [
   "Upper-Intermediate",
   "Advanced",
 ];
+const LEVEL_CODES = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
 // Level thresholds: XP needed to START each level
-// Level 1 starts at 0, Level 2 starts at 500, etc.
+// Level 1 starts at 0, Level 2 starts at 2000, etc.
 const LEVEL_START_THRESHOLDS = {
   1: 0,
-  2: 500,    // 1² × 500
-  3: 2000,   // 2² × 500
-  4: 4500,   // 3² × 500
-  5: 8000,   // 4² × 500
-  6: 12500,  // 5² × 500
-};
-
-// Level end thresholds: XP needed to REACH next level
-const LEVEL_END_THRESHOLDS = {
-  1: 500,    // 1² × 500
   2: 2000,   // 2² × 500
   3: 4500,   // 3² × 500
   4: 8000,   // 4² × 500
@@ -36,8 +27,7 @@ const LEVEL_END_THRESHOLDS = {
 };
 
 /**
- * Calculate XP threshold for a level using formula: threshold = level² × 500
- * This returns the XP needed to REACH the next level (end of current level)
+ * Calculate XP threshold needed to reach/start the given level.
  * @param {number} levelNumber - Level number (1-6)
  * @returns {number} XP threshold
  */
@@ -45,7 +35,7 @@ export function calculateLevelThreshold(levelNumber) {
   if (levelNumber < 1 || levelNumber > 6) {
     throw new Error("Level must be between 1 and 6");
   }
-  return LEVEL_END_THRESHOLDS[levelNumber];
+  return LEVEL_START_THRESHOLDS[levelNumber];
 }
 
 /**
@@ -86,6 +76,31 @@ export function getLevelName(level) {
   return LEVEL_NAMES[level - 1];
 }
 
+export function getLevelCode(level) {
+  if (level < 1 || level > 6) {
+    throw new Error("Level must be between 1 and 6");
+  }
+  return LEVEL_CODES[level - 1];
+}
+
+export function getLevelNumberFromCode(levelCode) {
+  const index = LEVEL_CODES.indexOf(String(levelCode || "").trim().toUpperCase());
+  return index >= 0 ? index + 1 : null;
+}
+
+const getStoredNextLevelThreshold = (currentLevel) =>
+  currentLevel < 6 ? calculateLevelThreshold(currentLevel + 1) : calculateLevelThreshold(6);
+
+const resolveXpFromUserLevel = (user) => {
+  const rawXp = Math.max(0, Number(user?.exp || 0));
+  const placementLevel = getLevelNumberFromCode(user?.currentLevel);
+  if (!placementLevel) {
+    return rawXp;
+  }
+
+  return Math.max(rawXp, getLevelStartThreshold(placementLevel));
+};
+
 /**
  * Check if user is eligible for level-up
  * @param {string} userId - User ID
@@ -94,20 +109,20 @@ export function getLevelName(level) {
 export async function checkLevelUpEligibility(userId) {
   const uid = new mongoose.Types.ObjectId(userId);
 
-  // Get user's current XP from User model
-  const user = await User.findById(uid).select("exp").lean();
+  // Get user's current XP and placement level from User model
+  const user = await User.findById(uid).select("exp currentLevel").lean();
   if (!user) {
     throw new Error("User not found");
   }
 
-  const totalXp = user.exp || 0;
+  const totalXp = resolveXpFromUserLevel(user);
 
   // Get or create UserLevel
   let userLevel = await UserLevel.findOne({ userId: uid });
   if (!userLevel) {
     // Create initial UserLevel if doesn't exist
     const currentLevel = getLevelFromXp(totalXp);
-    const nextLevelThreshold = calculateLevelThreshold(currentLevel + 1);
+    const nextLevelThreshold = getStoredNextLevelThreshold(currentLevel);
     userLevel = await UserLevel.create({
       userId: uid,
       currentLevel,
@@ -119,13 +134,20 @@ export async function checkLevelUpEligibility(userId) {
 
   // Update totalXp from User model
   userLevel.totalXp = totalXp;
+  if (totalXp > Number(user.exp || 0)) {
+    await User.updateOne({ _id: uid }, { $set: { exp: totalXp } });
+  }
   
   // Recalculate current level from XP to ensure consistency
   const calculatedLevel = getLevelFromXp(totalXp);
+  const calculatedLevelCode = getLevelCode(calculatedLevel);
+  if (user.currentLevel !== calculatedLevelCode) {
+    await User.updateOne({ _id: uid }, { $set: { currentLevel: calculatedLevelCode } });
+  }
   if (userLevel.currentLevel !== calculatedLevel) {
     console.log(`[Level Manager] Fixing level mismatch in eligibility check for user ${userId}: stored=${userLevel.currentLevel}, calculated=${calculatedLevel}, xp=${totalXp}`);
     userLevel.currentLevel = calculatedLevel;
-    userLevel.nextLevelThreshold = calculatedLevel < 6 ? calculateLevelThreshold(calculatedLevel + 1) : null;
+    userLevel.nextLevelThreshold = getStoredNextLevelThreshold(calculatedLevel);
   }
 
   const currentLevel = userLevel.currentLevel;
@@ -196,19 +218,19 @@ export async function checkLevelUpEligibility(userId) {
 export async function getUserLevelInfo(userId) {
   const uid = new mongoose.Types.ObjectId(userId);
 
-  // Get user's current XP
-  const user = await User.findById(uid).select("exp").lean();
+  // Get user's current XP and placement level
+  const user = await User.findById(uid).select("exp currentLevel").lean();
   if (!user) {
     throw new Error("User not found");
   }
 
-  const totalXp = user.exp || 0;
+  const totalXp = resolveXpFromUserLevel(user);
 
   // Get or create UserLevel
   let userLevel = await UserLevel.findOne({ userId: uid });
   if (!userLevel) {
     const currentLevel = getLevelFromXp(totalXp);
-    const nextLevelThreshold = calculateLevelThreshold(currentLevel + 1);
+    const nextLevelThreshold = getStoredNextLevelThreshold(currentLevel);
     userLevel = await UserLevel.create({
       userId: uid,
       currentLevel,
@@ -220,13 +242,20 @@ export async function getUserLevelInfo(userId) {
 
   // Update totalXp
   userLevel.totalXp = totalXp;
+  if (totalXp > Number(user.exp || 0)) {
+    await User.updateOne({ _id: uid }, { $set: { exp: totalXp } });
+  }
   
   // Recalculate current level from XP to ensure consistency
   const calculatedLevel = getLevelFromXp(totalXp);
+  const calculatedLevelCode = getLevelCode(calculatedLevel);
+  if (user.currentLevel !== calculatedLevelCode) {
+    await User.updateOne({ _id: uid }, { $set: { currentLevel: calculatedLevelCode } });
+  }
   if (userLevel.currentLevel !== calculatedLevel) {
     console.log(`[Level Manager] Fixing level mismatch for user ${userId}: stored=${userLevel.currentLevel}, calculated=${calculatedLevel}, xp=${totalXp}`);
     userLevel.currentLevel = calculatedLevel;
-    userLevel.nextLevelThreshold = calculatedLevel < 6 ? calculateLevelThreshold(calculatedLevel + 1) : null;
+    userLevel.nextLevelThreshold = getStoredNextLevelThreshold(calculatedLevel);
   }
   
   await userLevel.save();
@@ -260,7 +289,8 @@ export async function getUserLevelInfo(userId) {
     xpToNextLevel: Math.max(0, xpToNextLevel),
     progressPercentage: Math.round(progressPercentage * 100) / 100,
     testAvailable: userLevel.testAvailable,
-    canAttemptTest: userLevel.testAvailable && totalXp >= nextLevelThreshold,
+    canAttemptTest: Boolean(nextLevelThreshold && userLevel.testAvailable && totalXp >= nextLevelThreshold),
+    currentCefrLevel: getLevelCode(currentLevel),
   };
 }
 
@@ -300,11 +330,17 @@ export async function advanceUserLevel(
 
     // Update UserLevel
     userLevel.currentLevel = newLevel;
-    userLevel.nextLevelThreshold = calculateLevelThreshold(newLevel + 1);
+    userLevel.nextLevelThreshold = getStoredNextLevelThreshold(newLevel);
     userLevel.testAvailable = false;
     userLevel.lastTestAttemptAt = null;
     userLevel.xpAtLastFailedTest = null;
     await userLevel.save({ session });
+
+    await User.updateOne(
+      { _id: uid },
+      { $set: { currentLevel: getLevelCode(newLevel) } },
+      { session }
+    );
 
     // Create LevelHistory entry
     const levelName = getLevelName(newLevel);

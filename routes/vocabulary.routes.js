@@ -16,6 +16,7 @@ import {
   getAdminVocabularyWords,
   getRecommendedVocabularies,
   getVocabularyById,
+  getVocabularyFilters,
   getVocabularyHints,
   getVocabularyHistory,
   getVocabularyLeaderboard,
@@ -92,6 +93,12 @@ router.get(
   "/vocabularies",
   requireFeatureQuota("vocabulary_library"),
   listVocabularies
+);
+
+router.get(
+  "/vocabularies/filters",
+  requireFeatureQuota("vocabulary_library"),
+  getVocabularyFilters
 );
 
 router.get(

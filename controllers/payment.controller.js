@@ -16,6 +16,7 @@ import {
 } from "../services/payment-qr.service.js";
 import {
     createPaymentPackage,
+    deletePaymentPackage,
     getPaymentPackageBySelector,
     getPaymentPackagesCatalog,
     updatePaymentPackage,
@@ -678,6 +679,30 @@ const patchPaymentPackage = async (req, res) => {
     }
 };
 
+const removePaymentPackage = async (req, res) => {
+    try {
+        const result = await deletePaymentPackage(req.params.packageId);
+
+        return res.status(200).json({
+            success: true,
+            message: "Payment package deleted successfully",
+            data: result,
+        });
+    } catch (error) {
+        const statusCode = resolveBusinessErrorStatus(error);
+        const errorMessage =
+            String(error?.message || "").trim() || "Failed to delete payment package";
+
+        return res.status(statusCode).json({
+            success: false,
+            message: errorMessage,
+            error: errorMessage,
+            errorCode: error?.code || null,
+            details: error?.details || null,
+        });
+    }
+};
+
 export {
     cancelPayment,
     createPayment,
@@ -687,6 +712,7 @@ export {
     patchPaymentPackage,
     postPaymentPackage,
     reconcilePayment,
+    removePaymentPackage,
     syncPayments,
     verifyPayment,
 };
