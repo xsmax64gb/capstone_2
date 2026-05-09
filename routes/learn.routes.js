@@ -1,18 +1,23 @@
 import express from "express";
 
 import {
+  adminCreateAchievement,
   adminCreateLearnMap,
   adminCreateStep,
+  adminDeleteAchievement,
   adminDeleteLearnMap,
   adminDeleteStep,
   adminGenerateLearnMapDraft,
   adminGenerateStepDraft,
+  adminListAchievements,
   adminListLearnMaps,
   adminListSteps,
+  adminUpdateAchievement,
   adminUpdateLearnMap,
   adminUpdateStep,
   getLearnConversation,
   getLearnMapBySlug,
+  getMyLearnAchievements,
   listLearnMaps,
   postEndLearnConversation,
   postLearnMessageEvaluation,
@@ -56,6 +61,7 @@ router.post(
   requireFeatureQuota("ai_speaking"),
   postEndLearnConversation
 );
+router.get("/learn/achievements/me", requireAuth, getMyLearnAchievements);
 
 router.get("/admin/learn/maps", requireAuth, requireAdmin, adminListLearnMaps);
 router.post(
@@ -78,5 +84,10 @@ router.post(
 router.post("/admin/learn/maps/:mapId/steps", requireAuth, requireAdmin, adminCreateStep);
 router.put("/admin/learn/steps/:id", requireAuth, requireAdmin, adminUpdateStep);
 router.delete("/admin/learn/steps/:id", requireAuth, requireAdmin, adminDeleteStep);
+
+router.get("/admin/learn/achievements", requireAuth, requireAdmin, adminListAchievements);
+router.post("/admin/learn/achievements", requireAuth, requireAdmin, adminCreateAchievement);
+router.put("/admin/learn/achievements/:id", requireAuth, requireAdmin, adminUpdateAchievement);
+router.delete("/admin/learn/achievements/:id", requireAuth, requireAdmin, adminDeleteAchievement);
 
 export default router;

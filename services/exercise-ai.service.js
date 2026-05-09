@@ -56,6 +56,7 @@ Rules:
   @: <single letter a, b, c, or d — the correct option>
 - Do not add extra labels, numbering, or commentary outside this format.
 - Questions must match the user's level, topic, grammar/vocabulary focus, and difficulty.
+- Every q: line must be unique; never reuse the same question text with different options.
 - If asked to increase difficulty across items, make later questions slightly harder.
 - Options must be plausible; exactly one correct answer.`;
 
