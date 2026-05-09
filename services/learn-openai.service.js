@@ -360,10 +360,15 @@ Return a single JSON object only with keys:
 
 Rules:
 - Evaluate both grammar AND topic relevance based on STEP_CONTEXT and PREVIOUS_AI_MESSAGE.
-- If the sentence is completely off-topic or doesn't relate to the lesson context, give low scores and strict feedback in Vietnamese.
-- If the sentence is on-topic but has grammar issues, focus on grammar fixes.
+- Vietnamese is the required coaching language for every learner-facing explanation.
+- Write every "grammarErrors[].message", "grammarErrors[].rule", and "feedback" in Vietnamese.
+- "improvedSentence" must also be Vietnamese coaching text. If you need to show a better English reply, introduce it in Vietnamese, for example: "Bạn có thể nói: \"So FPS is ...\""
+- Keep English only for exact vocabulary, grammar terms, acronyms, quoted learner text, and the corrected English sentence inside quotes.
+- Do not return English-only feedback such as "Use the correct term..." or "is unrelated to the lesson topic".
+- If the sentence is completely off-topic or doesn't relate to the lesson context, give low scores and explain the topic mismatch in Vietnamese.
+- If the sentence is on-topic but has grammar issues, explain the grammar fix in Vietnamese while preserving grammar keywords like "present simple", "article", "preposition" when useful.
 - If the sentence is both grammatically correct AND on-topic, give high scores and praise in Vietnamese.
-- For off-topic responses, set "isCorrect" to false even if grammar is perfect, and explain the topic mismatch in Vietnamese.
+- For off-topic responses, set "isCorrect" to false even if grammar is perfect.
 - Keep "feedback" short and direct in Vietnamese.
 - Only include task ids from TASKS_CONTEXT when the response clearly completes them.
 
@@ -413,7 +418,7 @@ ${tasksContext}`,
   const isCorrect = Boolean(parsed.isCorrect);
   const improvedSentence = String(parsed.improvedSentence ?? "").trim();
   const feedback = String(parsed.feedback ?? "").trim();
-  const suggestion = improvedSentence || feedback || "Please try to respond to the lesson topic.";
+  const suggestion = improvedSentence || feedback || "Bạn hãy thử trả lời đúng với chủ đề bài học.";
   const turnQualityScore = isCorrect
     ? 95
     : grammarErrors.length === 0
