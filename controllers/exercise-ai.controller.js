@@ -12,28 +12,67 @@ const toInt = (v, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+const resolveCorrectIndex = (question, options, index) => {
+  const rawIndex = question?.correctIndex ?? question?.answerIndex;
+  if (rawIndex !== undefined && rawIndex !== null && rawIndex !== "") {
+    const parsed = toInt(rawIndex, -1);
+    if (parsed >= 0 && parsed < options.length) {
+      return parsed;
+    }
+    throw new Error(`Question ${index + 1}: invalid correctIndex`);
+  }
+
+  const rawAnswer = question?.correctAnswer ?? question?.answer ?? question?.correctOption;
+  if (typeof rawAnswer === "number") {
+    if (Number.isInteger(rawAnswer) && rawAnswer >= 0 && rawAnswer < options.length) {
+      return rawAnswer;
+    }
+    throw new Error(`Question ${index + 1}: invalid correctAnswer`);
+  }
+
+  const answerText = String(rawAnswer ?? "").trim();
+  if (/^\d+$/.test(answerText)) {
+    const parsed = toInt(answerText, -1);
+    if (parsed >= 0 && parsed < options.length) {
+      return parsed;
+    }
+  }
+
+  const letterIndex = "abcd".indexOf(answerText.toLowerCase());
+  if (letterIndex >= 0 && letterIndex < options.length) {
+    return letterIndex;
+  }
+
+  const optionIndex = options.findIndex(
+    (option) => option.toLowerCase() === answerText.toLowerCase()
+  );
+  if (optionIndex >= 0) {
+    return optionIndex;
+  }
+
+  throw new Error(`Question ${index + 1}: invalid correctAnswer`);
+};
+
 const normalizeIncomingQuestions = (raw) => {
   if (!Array.isArray(raw)) {
     throw new Error("questions must be an array");
   }
   return raw.map((q, index) => {
     const options = Array.isArray(q?.options) ? q.options.map((o) => String(o).trim()) : [];
-    if (options.length !== 4) {
+    if (options.length !== 4 || options.some((option) => !option)) {
       throw new Error(`Question ${index + 1}: need exactly 4 options`);
     }
-    let correctIndex = toInt(q?.correctIndex, -1);
-    if (correctIndex < 0 || correctIndex > 3) {
-      correctIndex = toInt(q?.correctAnswer, 0);
+    const prompt = String(q?.prompt ?? q?.question ?? "").trim();
+    if (!prompt) {
+      throw new Error(`Question ${index + 1}: prompt is required`);
     }
-    if (correctIndex < 0 || correctIndex > 3) {
-      throw new Error(`Question ${index + 1}: invalid correctIndex`);
-    }
+    const correctIndex = resolveCorrectIndex(q, options, index);
     return {
-      prompt: String(q?.prompt ?? q?.question ?? "").trim(),
-      question: "",
+      prompt,
+      question: prompt,
       options,
       correctIndex,
-      correctAnswer: correctIndex,
+      correctAnswer: options[correctIndex],
       explanation: String(q?.explanation ?? "").trim(),
       score: Math.max(1, toInt(q?.score, 1)),
     };

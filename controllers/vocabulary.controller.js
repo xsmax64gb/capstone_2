@@ -1362,9 +1362,15 @@ const submitVocabularyAttempt = async (req, res) => {
             : snapshotOptions.findIndex((option) =>
               vocabularyMeaningsMatch(word.meaning, option)
             );
-        const correct =
+        const selectedMatchesSnapshot =
+          Number.isInteger(selectedIdx) &&
+          Number.isInteger(correctIndex) &&
+          selectedIdx === correctIndex;
+        const selectedMatchesMeaning =
           selectedText.trim().length > 0 &&
           vocabularyMeaningsMatch(word.meaning, selectedText);
+        const correct =
+          selectedMatchesSnapshot || selectedMatchesMeaning;
 
         return {
           wordId: new mongoose.Types.ObjectId(wordId),

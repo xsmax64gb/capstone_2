@@ -129,8 +129,42 @@ const inferAttemptXpReason = (attempt) => {
     return Number(attempt?.earnedXp || 0) > 0 ? "awarded" : "already_completed";
 };
 
-const normalizeQuestion = (question, index) => {
-    const options = Array.isArray(question?.options) ? question.options : [];
+const normalizeText = (value) => String(value ?? "").trim();
+
+const countQuestionPrompts = (questions) => {
+    const counts = new Map();
+
+    questions.forEach((question) => {
+        const prompt = normalizeText(question?.prompt);
+        if (!prompt) {
+            return;
+        }
+        counts.set(prompt, (counts.get(prompt) || 0) + 1);
+    });
+
+    return counts;
+};
+
+const resolveQuestionPrompt = (question, promptCounts) => {
+    const prompt = normalizeText(question?.prompt);
+    const legacyQuestion = normalizeText(question?.question);
+
+    if (
+        legacyQuestion &&
+        legacyQuestion !== prompt &&
+        prompt &&
+        (promptCounts.get(prompt) || 0) > 1
+    ) {
+        return legacyQuestion;
+    }
+
+    return prompt || legacyQuestion;
+};
+
+const normalizeQuestion = (question, index, promptCounts = new Map()) => {
+    const options = Array.isArray(question?.options)
+        ? question.options.map((item) => normalizeText(item))
+        : [];
     let correctIndex = 0;
 
     if (typeof question?.correctIndex === "number") {
@@ -138,7 +172,10 @@ const normalizeQuestion = (question, index) => {
     } else if (typeof question?.correctAnswer === "number") {
         correctIndex = question.correctAnswer;
     } else if (typeof question?.correctAnswer === "string") {
-        const found = options.findIndex((item) => item === question.correctAnswer);
+        const correctAnswer = normalizeText(question.correctAnswer);
+        const found = options.findIndex(
+            (item) => item.toLowerCase() === correctAnswer.toLowerCase()
+        );
         correctIndex = found >= 0 ? found : 0;
     }
 
@@ -148,7 +185,8 @@ const normalizeQuestion = (question, index) => {
 
     return {
         id: String(question?._id || `q_${index + 1}`),
-        prompt: question?.prompt || question?.question || "",
+        prompt: resolveQuestionPrompt(question, promptCounts),
+        question: normalizeText(question?.question) || normalizeText(question?.prompt),
         options,
         correctIndex,
         explanation: question?.explanation || "",
@@ -156,9 +194,11 @@ const normalizeQuestion = (question, index) => {
 };
 
 const normalizeExercise = (exercise, index = 0) => {
-    const questions = Array.isArray(exercise?.questions)
-        ? exercise.questions.map((item, questionIndex) => normalizeQuestion(item, questionIndex))
-        : [];
+    const rawQuestions = Array.isArray(exercise?.questions) ? exercise.questions : [];
+    const promptCounts = countQuestionPrompts(rawQuestions);
+    const questions = rawQuestions.map((item, questionIndex) =>
+        normalizeQuestion(item, questionIndex, promptCounts)
+    );
 
     const topic = exercise?.topic || "general";
     const durationMinutes =
