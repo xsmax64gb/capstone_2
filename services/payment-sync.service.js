@@ -1,13 +1,17 @@
 import {
     expireOverduePendingPayments,
     getPaymentByInvoice,
-    listPendingPayments,
+    listXGateMatchablePayments,
     markPaymentPaidByInvoice,
 } from "./payment.service.js";
-import { fetchXGateTransactions } from "./xgate.service.js";
+import {
+    extractTransactions,
+    fetchXGateTransactions,
+    normalizeTransaction,
+} from "./xgate.service.js";
 
 const RATE_WINDOW_MS = 60 * 1000;
-const XGATE_RATE_LIMIT_PER_MINUTE = 5;
+const XGATE_RATE_LIMIT_PER_MINUTE = 2;
 
 const syncRequestTimestamps = [];
 const focusSyncRequestTimestamps = [];
@@ -35,7 +39,7 @@ const pruneFocusRateWindow = () => {
 };
 
 const resolveFocusRateLimitPerMinute = () =>
-    sanitizePositiveInt(process.env.XGATE_FOCUS_RATE_LIMIT_PER_MINUTE, 30, 5, 120);
+    sanitizePositiveInt(process.env.XGATE_FOCUS_RATE_LIMIT_PER_MINUTE, 3, 1, 30);
 
 const canSendFocusXGateRequest = () => {
     pruneFocusRateWindow();
@@ -119,6 +123,60 @@ const buildTransactionMatchCandidates = (transaction) => {
     return uniqueCandidates;
 };
 
+const buildPaymentByInvoiceToken = (payments = []) => {
+    const paymentByToken = new Map();
+
+    for (const payment of payments) {
+        const token = sanitizeInvoiceToken(payment.invoiceNumber);
+        if (token) {
+            paymentByToken.set(token, payment);
+        }
+    }
+
+    return paymentByToken;
+};
+
+const hasComparableAmount = (transaction) => {
+    const amount = Number(transaction?.amount);
+    return Number.isFinite(amount) && amount > 0;
+};
+
+const findPaymentMatchForTransaction = (
+    transaction,
+    paymentByToken,
+    { requireAmountWhenPresent = false } = {}
+) => {
+    const matchCandidates = buildTransactionMatchCandidates(transaction);
+    if (matchCandidates.length === 0 || paymentByToken.size === 0) {
+        return null;
+    }
+
+    const shouldMatchAmount = requireAmountWhenPresent && hasComparableAmount(transaction);
+
+    for (const [token, payment] of paymentByToken.entries()) {
+        if (
+            shouldMatchAmount &&
+            !transactionAmountMatches(transaction, payment.amount)
+        ) {
+            continue;
+        }
+
+        const matchedCandidate = matchCandidates.find((candidate) =>
+            candidate.normalized.includes(token)
+        );
+
+        if (matchedCandidate) {
+            return {
+                payment,
+                transaction,
+                matchedValue: matchedCandidate.raw,
+            };
+        }
+    }
+
+    return null;
+};
+
 const pruneRateWindow = () => {
     const now = Date.now();
     while (syncRequestTimestamps.length > 0) {
@@ -132,7 +190,7 @@ const pruneRateWindow = () => {
 
 const canSendXGateRequest = () => {
     pruneRateWindow();
-    return syncRequestTimestamps.length < XGATE_RATE_LIMIT_PER_MINUTE;
+    return syncRequestTimestamps.length < resolveRateLimitPerMinute();
 };
 
 const registerXGateRequest = () => {
@@ -143,6 +201,14 @@ const resolveMaxRequests = (maxRequests) => {
     const envValue = sanitizePositiveInt(process.env.XGATE_MAX_REQUESTS_PER_RUN, 1, 1, 5);
     return sanitizePositiveInt(maxRequests, envValue, 1, 5);
 };
+
+const resolveRateLimitPerMinute = () =>
+    sanitizePositiveInt(
+        process.env.XGATE_RATE_LIMIT_PER_MINUTE,
+        XGATE_RATE_LIMIT_PER_MINUTE,
+        1,
+        30
+    );
 
 const resolveFetchType = () => {
     const normalized = normalizeTrimmedString(process.env.XGATE_TYPE).toLowerCase();
@@ -175,7 +241,10 @@ const runPaymentSyncForInvoice = async ({
     }
 
     const payment = await getPaymentByInvoice(normalizedInvoice);
-    if (!payment || payment.status !== "pending") {
+    const isRecoverableExpiredPayment =
+        payment?.status === "failed" && payment?.failureReason === "expired";
+
+    if (!payment || (payment.status !== "pending" && !isRecoverableExpiredPayment)) {
         return {
             source,
             startedAt: startedAt.toISOString(),
@@ -349,7 +418,7 @@ const runPaymentSync = async ({
 
     await expireOverduePendingPayments();
 
-    const pendingPayments = await listPendingPayments(300);
+    const pendingPayments = await listXGateMatchablePayments(500);
     if (pendingPayments.length === 0) {
         return {
             source,
@@ -366,13 +435,7 @@ const runPaymentSync = async ({
         };
     }
 
-    const pendingByToken = new Map();
-    for (const payment of pendingPayments) {
-        const token = sanitizeInvoiceToken(payment.invoiceNumber);
-        if (token) {
-            pendingByToken.set(token, payment);
-        }
-    }
+    const pendingByToken = buildPaymentByInvoiceToken(pendingPayments);
 
     if (pendingByToken.size === 0) {
         return {
@@ -420,27 +483,18 @@ const runPaymentSync = async ({
 
     const matchedByInvoice = new Map();
     for (const transaction of transactions) {
-        const matchCandidates = buildTransactionMatchCandidates(transaction);
-        if (matchCandidates.length === 0) {
-            continue;
-        }
+        const filteredPendingByToken = new Map(
+            [...pendingByToken.entries()].filter(
+                ([, payment]) => !matchedByInvoice.has(payment.invoiceNumber)
+            )
+        );
+        const match = findPaymentMatchForTransaction(
+            transaction,
+            filteredPendingByToken
+        );
 
-        for (const [token, payment] of pendingByToken.entries()) {
-            if (matchedByInvoice.has(payment.invoiceNumber)) {
-                continue;
-            }
-
-            const matchedCandidate = matchCandidates.find((candidate) =>
-                candidate.normalized.includes(token)
-            );
-
-            if (matchedCandidate) {
-                matchedByInvoice.set(payment.invoiceNumber, {
-                    payment,
-                    transaction,
-                    matchedValue: matchedCandidate.raw,
-                });
-            }
+        if (match) {
+            matchedByInvoice.set(match.payment.invoiceNumber, match);
         }
     }
 
@@ -480,11 +534,106 @@ const runPaymentSync = async ({
     };
 };
 
+const runPaymentWebhookSync = async ({
+    payload,
+    source = "xgate_webhook",
+} = {}) => {
+    const startedAt = new Date();
+
+    await expireOverduePendingPayments();
+
+    const transactions = extractTransactions(payload).map(normalizeTransaction);
+    if (transactions.length === 0) {
+        return {
+            source,
+            startedAt: startedAt.toISOString(),
+            finishedAt: new Date().toISOString(),
+            pendingChecked: 0,
+            matchedPayments: 0,
+            updatedPayments: 0,
+            xgateRequests: 0,
+            xgateTransactions: 0,
+            skippedByRateLimit: false,
+            status: "skipped",
+            message: "Webhook received without a recognizable XGate transaction",
+        };
+    }
+
+    const matchablePayments = await listXGateMatchablePayments(500);
+    const paymentByToken = buildPaymentByInvoiceToken(matchablePayments);
+
+    if (paymentByToken.size === 0) {
+        return {
+            source,
+            startedAt: startedAt.toISOString(),
+            finishedAt: new Date().toISOString(),
+            pendingChecked: matchablePayments.length,
+            matchedPayments: 0,
+            updatedPayments: 0,
+            xgateRequests: 0,
+            xgateTransactions: transactions.length,
+            skippedByRateLimit: false,
+            status: "completed",
+            message: "Webhook received but no payment is waiting for XGate match",
+        };
+    }
+
+    const matchedByInvoice = new Map();
+    for (const transaction of transactions) {
+        const availablePayments = new Map(
+            [...paymentByToken.entries()].filter(
+                ([, payment]) => !matchedByInvoice.has(payment.invoiceNumber)
+            )
+        );
+        const match = findPaymentMatchForTransaction(
+            transaction,
+            availablePayments,
+            { requireAmountWhenPresent: true }
+        );
+
+        if (match) {
+            matchedByInvoice.set(match.payment.invoiceNumber, match);
+        }
+    }
+
+    let updatedPayments = 0;
+    for (const [invoiceNumber, match] of matchedByInvoice.entries()) {
+        const affected = await markPaymentPaidByInvoice({
+            invoiceNumber,
+            xgateReference: match.transaction.referenceCode || match.transaction.id,
+            matchedContent: match.matchedValue,
+            transactionDate: match.transaction.transactionDate,
+        });
+
+        updatedPayments += affected;
+    }
+
+    const message =
+        updatedPayments > 0
+            ? `Webhook updated ${updatedPayments} payment(s) to paid status`
+            : "Webhook received but no matching pending payment was updated";
+
+    return {
+        source,
+        startedAt: startedAt.toISOString(),
+        finishedAt: new Date().toISOString(),
+        pendingChecked: matchablePayments.length,
+        matchedPayments: matchedByInvoice.size,
+        updatedPayments,
+        xgateRequests: 0,
+        xgateTransactions: transactions.length,
+        skippedByRateLimit: false,
+        status: "completed",
+        message,
+    };
+};
+
 export {
     RATE_WINDOW_MS,
     XGATE_RATE_LIMIT_PER_MINUTE,
     runPaymentSync,
     runPaymentSyncForInvoice,
+    runPaymentWebhookSync,
     sanitizeInvoiceToken,
     sanitizeTextForMatch,
 };

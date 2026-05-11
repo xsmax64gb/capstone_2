@@ -196,7 +196,22 @@ OPENAI_API_KEY=your_openai_key
 SENDGRID_API_KEY=your_sendgrid_key
 CORS_ORIGINS=https://your-frontend-domain.com,https://admin.your-frontend-domain.com
 CORS_CREDENTIALS=false
+XGATE_API_KEY=your_xgate_key
+XGATE_SYNC_ENABLED=true
+XGATE_SYNC_INTERVAL_MS=1800000
+XGATE_RATE_LIMIT_PER_MINUTE=2
+XGATE_WEBHOOK_SECRET=
 ```
+
+### XGate webhook
+
+Configure XGate to call:
+
+```text
+POST https://capstone-2-g51u.onrender.com/api/payments/xgate/webhook
+```
+
+The webhook is the primary payment sync path. `XGATE_API_KEY` is kept for admin/manual backup sync and scheduled backup polling. If `XGATE_WEBHOOK_SECRET` is set, use the same value in XGate's HMAC secret field. The endpoint also accepts simple secret forwarding as `Authorization: Bearer <secret>`, `X-XGate-Webhook-Secret`, or `?secret=<secret>`.
 
 ## 🤝 Contributing
 

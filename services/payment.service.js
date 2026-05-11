@@ -6,6 +6,7 @@ const DEFAULT_PAYMENT_METHOD = "bank_transfer";
 const DEFAULT_PAYMENT_QR_TTL_SECONDS = 180;
 const MIN_PAYMENT_QR_TTL_SECONDS = 60;
 const MAX_PAYMENT_QR_TTL_SECONDS = 30 * 60;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const MIN_BANK_TRANSFER_AMOUNT = 2000;
 const EXPIRED_PAYMENT_REASON = "expired";
 const CANCELLED_BY_USER_REASON = "cancelled_by_user";
@@ -353,6 +354,28 @@ const listPendingPayments = async (limit = 200) => {
     return items.map(mapPaymentDoc);
 };
 
+const listXGateMatchablePayments = async (limit = 500) => {
+    const safeLimit = sanitizeLimit(limit, 1, 1000, 500);
+    const now = new Date();
+
+    const items = await Payment.find({
+        paymentMethod: "bank_transfer",
+        $or: [
+            { status: "pending" },
+            {
+                status: "failed",
+                failureReason: EXPIRED_PAYMENT_REASON,
+                expiresAt: { $ne: null, $gte: new Date(now.getTime() - DAY_MS) },
+            },
+        ],
+    })
+        .sort({ createdAt: -1 })
+        .limit(safeLimit)
+        .lean();
+
+    return items.map(mapPaymentDoc);
+};
+
 const expireOverduePendingPayments = async ({ reason = EXPIRED_PAYMENT_REASON } = {}) => {
     const now = new Date();
     const result = await Payment.updateMany(
@@ -530,6 +553,7 @@ export {
     getLatestSyncedAt,
     getPaymentByInvoice,
     isPaymentExpired,
+    listXGateMatchablePayments,
     listPendingPayments,
     listRecentPayments,
     markPaymentExpiredByInvoice,

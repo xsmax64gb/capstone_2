@@ -6,6 +6,7 @@ import {
     getMyFeatureQuotas,
     getPaymentPackages,
     getPayments,
+    handleXGatePaymentWebhook,
     patchPaymentPackage,
     postPaymentPackage,
     reconcilePayment,
@@ -17,6 +18,7 @@ import { requireAdmin, requireAuth } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 
+router.post("/payments/xgate/webhook", handleXGatePaymentWebhook);
 router.get("/payments", requireAuth, getPayments);
 router.post("/payments", requireAuth, createPayment);
 router.post("/payments/cancel", requireAuth, cancelPayment);

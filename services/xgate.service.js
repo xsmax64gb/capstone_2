@@ -64,8 +64,51 @@ const pickString = (object, candidates, fallback = "") => {
 };
 
 const toNumber = (value, fallback = 0) => {
-    const parsed = Number(value);
+    const normalized = (() => {
+        if (typeof value !== "string") {
+            return value;
+        }
+
+        const numericText = value.trim().replace(/[^\d,.-]/g, "");
+        const lastDot = numericText.lastIndexOf(".");
+        const lastComma = numericText.lastIndexOf(",");
+        const separatorIndex = Math.max(lastDot, lastComma);
+
+        if (separatorIndex < 0) {
+            return numericText;
+        }
+
+        const decimalLength = numericText.length - separatorIndex - 1;
+        if (decimalLength > 0 && decimalLength < 3) {
+            const whole = numericText.slice(0, separatorIndex).replace(/[.,]/g, "");
+            const decimal = numericText.slice(separatorIndex + 1).replace(/[.,]/g, "");
+            return `${whole}.${decimal}`;
+        }
+
+        return numericText.replace(/[.,]/g, "");
+    })();
+    const parsed = Number(normalized);
     return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const looksLikeTransaction = (payload) => {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return false;
+    }
+
+    return [
+        "amount",
+        "transactionId",
+        "transaction_id",
+        "transferContent",
+        "transfer_content",
+        "content",
+        "description",
+        "referenceCode",
+        "reference_code",
+        "transactionDate",
+        "transaction_date",
+    ].some((key) => payload[key] !== undefined && payload[key] !== null);
 };
 
 const extractTransactions = (payload) => {
@@ -100,10 +143,34 @@ const extractTransactions = (payload) => {
             if (Array.isArray(nested)) {
                 return nested;
             }
+
+            if (looksLikeTransaction(candidate)) {
+                return [candidate];
+            }
         }
     }
 
+    if (looksLikeTransaction(payload)) {
+        return [payload];
+    }
+
     return [];
+};
+
+const pickNumber = (object, candidates, fallback = 0) => {
+    if (!object || typeof object !== "object") {
+        return fallback;
+    }
+
+    for (const key of candidates) {
+        const current = object[key];
+        const parsed = toNumber(current, Number.NaN);
+        if (Number.isFinite(parsed)) {
+            return parsed;
+        }
+    }
+
+    return fallback;
 };
 
 const normalizeTransaction = (transaction, index = 0) => {
@@ -111,7 +178,9 @@ const normalizeTransaction = (transaction, index = 0) => {
         pickString(transaction, [
             "id",
             "transactionId",
+            "transaction_id",
             "txId",
+            "tx_id",
             "reference",
             "reference_code",
         ])
@@ -140,13 +209,27 @@ const normalizeTransaction = (transaction, index = 0) => {
         "transaction_date",
         "date",
         "createdAt",
+        "created_at",
+        "createdDate",
+        "created_date",
+        "datetime",
         "time",
     ]);
 
     return {
         id,
         content,
-        amount: toNumber(transaction?.amount, 0),
+        amount: pickNumber(transaction, [
+            "amount",
+            "transferAmount",
+            "transfer_amount",
+            "transactionAmount",
+            "transaction_amount",
+            "creditAmount",
+            "credit_amount",
+            "value",
+            "money",
+        ]),
         referenceCode,
         transactionDate,
         raw: transaction,
@@ -228,4 +311,4 @@ const fetchXGateTransactions = async (filters = {}) => {
     };
 };
 
-export { fetchXGateTransactions, normalizeTransaction };
+export { extractTransactions, fetchXGateTransactions, normalizeTransaction };

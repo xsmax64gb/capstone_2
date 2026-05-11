@@ -15,7 +15,7 @@ const sanitizePositiveInt = (value, fallback, min = 1000, max = 86400000) => {
 };
 
 const resolveSchedulerIntervalMs = () =>
-    sanitizePositiveInt(process.env.XGATE_SYNC_INTERVAL_MS, 300000, 60000, 86400000);
+    sanitizePositiveInt(process.env.XGATE_SYNC_INTERVAL_MS, 1800000, 300000, 86400000);
 
 const isSchedulerEnabled = () =>
     normalizeTrimmedString(process.env.XGATE_SYNC_ENABLED).toLowerCase() === "true";

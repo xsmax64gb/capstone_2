@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from "crypto";
+
 import { PAYMENT_METHODS } from "../models/constants.js";
 import {
     cancelPendingPaymentByInvoice,
@@ -22,7 +24,11 @@ import {
     updatePaymentPackage,
 } from "../services/payment-package.service.js";
 import { getUserFeatureQuotaOverview } from "../services/feature-quota.service.js";
-import { runPaymentSync, runPaymentSyncForInvoice } from "../services/payment-sync.service.js";
+import {
+    runPaymentSync,
+    runPaymentSyncForInvoice,
+    runPaymentWebhookSync,
+} from "../services/payment-sync.service.js";
 
 const MIN_BANK_TRANSFER_AMOUNT = 2000;
 
@@ -74,10 +80,13 @@ const resolveBusinessErrorStatus = (error) => {
     return 500;
 };
 
-const buildSkippedSyncSummary = (message) => {
+const buildSkippedSyncSummary = (
+    message,
+    source = "webhook_status_check"
+) => {
     const now = new Date().toISOString();
     return {
-        source: "manual",
+        source,
         startedAt: now,
         finishedAt: now,
         pendingChecked: 0,
@@ -89,6 +98,145 @@ const buildSkippedSyncSummary = (message) => {
         status: "skipped",
         message,
     };
+};
+
+const normalizeBoolean = (value) =>
+    ["1", "true", "yes", "y", "on"].includes(
+        normalizeTrimmedString(value).toLowerCase()
+    );
+
+const extractWebhookToken = (req) => {
+    const authorization = normalizeTrimmedString(req.headers.authorization);
+    if (authorization.toLowerCase().startsWith("bearer ")) {
+        return authorization.slice(7).trim();
+    }
+
+    return normalizeTrimmedString(
+        req.headers["x-xgate-webhook-secret"] ||
+        req.headers["x-xgate-token"] ||
+        req.headers["x-webhook-secret"] ||
+        req.headers["x-api-key"] ||
+        req.query?.secret ||
+        req.query?.token ||
+        req.query?.api_key
+    );
+};
+
+const getHeaderValue = (headers, names) => {
+    for (const name of names) {
+        const value = headers[name.toLowerCase()];
+        if (Array.isArray(value)) {
+            const first = value.find((item) => normalizeTrimmedString(item));
+            if (first) {
+                return normalizeTrimmedString(first);
+            }
+        }
+
+        const normalized = normalizeTrimmedString(value);
+        if (normalized) {
+            return normalized;
+        }
+    }
+
+    return "";
+};
+
+const extractWebhookSignature = (req) =>
+    getHeaderValue(req.headers, [
+        "x-xgate-signature",
+        "x-signature",
+        "x-webhook-signature",
+        "x-hub-signature-256",
+        "x-hmac-sha256",
+    ]);
+
+const extractWebhookTimestamp = (req) =>
+    getHeaderValue(req.headers, [
+        "x-xgate-timestamp",
+        "x-timestamp",
+        "x-webhook-timestamp",
+    ]);
+
+const normalizeSignatureForCompare = (value) => {
+    const trimmed = normalizeTrimmedString(value);
+    if (!trimmed) {
+        return "";
+    }
+
+    const withoutScheme = trimmed
+        .replace(/^sha256=/i, "")
+        .replace(/^v1=/i, "")
+        .replace(/^hmac-sha256=/i, "");
+
+    const commaSeparated = withoutScheme.split(",").map((item) => item.trim());
+    return commaSeparated.find(Boolean) || "";
+};
+
+const timingSafeStringEqual = (left, right) => {
+    const leftBuffer = Buffer.from(left);
+    const rightBuffer = Buffer.from(right);
+
+    if (leftBuffer.length !== rightBuffer.length) {
+        return false;
+    }
+
+    return timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+const buildWebhookSignatureCandidates = ({ secret, rawBody, timestamp }) => {
+    const payloads = [rawBody];
+    if (timestamp) {
+        payloads.push(`${timestamp}.${rawBody}`);
+        payloads.push(`v1=${timestamp}\n${rawBody}`);
+    }
+
+    return payloads.flatMap((payload) => {
+        const hmac = createHmac("sha256", secret).update(payload);
+        const hex = hmac.digest("hex");
+        const base64 = createHmac("sha256", secret).update(payload).digest("base64");
+
+        return [
+            hex,
+            hex.toUpperCase(),
+            base64,
+            `sha256=${hex}`,
+            `sha256=${base64}`,
+            `v1=${hex}`,
+        ];
+    });
+};
+
+const hasValidWebhookHmacSignature = (req, secret) => {
+    const signature = extractWebhookSignature(req);
+    if (!signature) {
+        return false;
+    }
+
+    const rawBody =
+        typeof req.rawBody === "string"
+            ? req.rawBody
+            : JSON.stringify(req.body ?? {});
+    const timestamp = extractWebhookTimestamp(req);
+    const normalizedSignature = normalizeSignatureForCompare(signature);
+
+    return buildWebhookSignatureCandidates({
+        secret,
+        rawBody,
+        timestamp,
+    }).some((candidate) => {
+        const normalizedCandidate = normalizeSignatureForCompare(candidate);
+        return timingSafeStringEqual(normalizedCandidate, normalizedSignature);
+    });
+};
+
+const isValidWebhookRequest = (req) => {
+    const expectedSecret = normalizeTrimmedString(process.env.XGATE_WEBHOOK_SECRET);
+    if (!expectedSecret) {
+        return true;
+    }
+
+    return extractWebhookToken(req) === expectedSecret ||
+        hasValidWebhookHmacSignature(req, expectedSecret);
 };
 
 const expirePaymentIfNeeded = async (payment) => {
@@ -282,9 +430,14 @@ const reconcilePayment = async (req, res) => {
             });
         }
 
+        const shouldRunBackupSync = normalizeBoolean(
+            req.body?.backupSync ?? req.body?.forceSync
+        );
+
         if (
             currentPayment.status === "failed" &&
-            currentPayment.failureReason === "expired"
+            currentPayment.failureReason === "expired" &&
+            !shouldRunBackupSync
         ) {
             return res.status(200).json({
                 success: true,
@@ -300,10 +453,14 @@ const reconcilePayment = async (req, res) => {
             });
         }
 
-        const syncSummary = await runPaymentSyncForInvoice({
-            invoiceNumber,
-            source: "manual",
-        });
+        const syncSummary = shouldRunBackupSync
+            ? await runPaymentSyncForInvoice({
+                invoiceNumber,
+                source: "manual_backup",
+            })
+            : buildSkippedSyncSummary(
+                "Webhook-first status check; XGate backup sync was not requested"
+            );
         const payment = await expirePaymentIfNeeded(
             await getPaymentByInvoice(invoiceNumber, ownerFilter)
         );
@@ -316,11 +473,15 @@ const reconcilePayment = async (req, res) => {
         }
 
         const allowProceed = payment.status === "paid";
+        const isExpiredPayment =
+            payment.status === "failed" && payment.failureReason === "expired";
 
         return res.status(200).json({
             success: true,
             message: allowProceed
                 ? "Payment is paid and ready to proceed"
+                : isExpiredPayment
+                    ? "Payment expired. Please create a new invoice."
                 : "Payment is still pending",
             data: {
                 invoiceNumber,
@@ -333,6 +494,37 @@ const reconcilePayment = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to reconcile payment",
+            error: error.message,
+        });
+    }
+};
+
+const handleXGatePaymentWebhook = async (req, res) => {
+    try {
+        if (!isValidWebhookRequest(req)) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid XGate webhook secret",
+            });
+        }
+
+        const summary = await runPaymentWebhookSync({
+            payload: req.body,
+            source: "xgate_webhook",
+        });
+
+        const statusCode = summary.status === "skipped" ? 202 : 200;
+        return res.status(statusCode).json({
+            success: true,
+            message: summary.message,
+            data: summary,
+        });
+    } catch (error) {
+        console.error("[XGateWebhook] Failed to process payment webhook", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to process XGate webhook",
             error: error.message,
         });
     }
@@ -707,6 +899,7 @@ export {
     cancelPayment,
     createPayment,
     getPaymentPackages,
+    handleXGatePaymentWebhook,
     getMyFeatureQuotas,
     getPayments,
     patchPaymentPackage,
