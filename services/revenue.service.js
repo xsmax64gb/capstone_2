@@ -1,4 +1,5 @@
 import Payment from "../models/payment.model.js";
+import "../models/user.model.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_RANGE_DAYS = 30;
@@ -382,8 +383,9 @@ const getRevenueStatistics = async (filters = {}) => {
             .sort({ paidAt: -1 })
             .limit(10)
             .select(
-                "invoiceNumber amount currency paymentMethod pricingKey externalRef paidAt xgateReference"
+                "userId userName userEmail invoiceNumber amount currency paymentMethod pricingKey externalRef paidAt xgateReference"
             )
+            .populate("userId", "fullName email avatarUrl")
             .lean(),
     ]);
 
@@ -414,6 +416,13 @@ const getRevenueStatistics = async (filters = {}) => {
         },
         recentPaid: recentPaid.map((item) => ({
             invoiceNumber: item.invoiceNumber,
+            userName:
+                item.userId?.fullName ||
+                item.userName ||
+                item.userEmail ||
+                "Người dùng",
+            userEmail: item.userId?.email || item.userEmail || null,
+            userAvatarUrl: item.userId?.avatarUrl || "",
             amount: Number(item.amount ?? 0),
             currency: item.currency,
             paymentMethod: item.paymentMethod,
