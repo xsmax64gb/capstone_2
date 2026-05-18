@@ -55,6 +55,68 @@ const normalizeWordLower = (value) =>
     .trim()
     .toLowerCase();
 
+const catalogOwnerFilter = () => [
+  { ownerId: null },
+  { ownerId: { $exists: false } },
+];
+
+const buildCatalogVocabularySetFilter = (extra = {}) => ({
+  isActive: true,
+  $or: catalogOwnerFilter(),
+  ...extra,
+});
+
+const buildAccessibleVocabularySetFilter = (userId, { personalOnly = false } = {}) => {
+  const hasValidUser = userId && mongoose.Types.ObjectId.isValid(userId);
+  const userObjectId = hasValidUser ? new mongoose.Types.ObjectId(userId) : null;
+
+  if (personalOnly) {
+    return userObjectId
+      ? { isActive: true, ownerId: userObjectId }
+      : { isActive: true, _id: null };
+  }
+
+  return userObjectId
+    ? {
+      isActive: true,
+      $or: [...catalogOwnerFilter(), { ownerId: userObjectId }],
+    }
+    : buildCatalogVocabularySetFilter();
+};
+
+const escapeRegex = (value) =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildVocabularySearchFilter = async (baseFilter, query) => {
+  const normalizedQuery = String(query || "").trim();
+  if (!normalizedQuery) {
+    return baseFilter;
+  }
+
+  const regex = new RegExp(escapeRegex(normalizedQuery), "i");
+  const matchingWordSetIds = await Vocabulary.distinct("setId", {
+    $or: [
+      { word: regex },
+      { meaning: regex },
+      { example: regex },
+    ],
+  });
+
+  return {
+    $and: [
+      baseFilter,
+      {
+        $or: [
+          { name: regex },
+          { description: regex },
+          { topic: regex },
+          { _id: { $in: matchingWordSetIds } },
+        ],
+      },
+    ],
+  };
+};
+
 const buildVocabularyWordPayload = (source) => {
   const word = String(source?.word || "").trim();
   const meaning = String(source?.meaning || "").trim();
@@ -707,17 +769,16 @@ const listVocabularies = async (req, res) => {
       limit = "20",
     } = req.query || {};
 
-    const q = typeof rawQuery === "string" ? rawQuery.trim().toLowerCase() : "";
-    const skip = (Math.max(1, parseInt(page, 10)) - 1) * Math.max(1, parseInt(limit, 10));
-    const take = Math.max(1, Math.min(100, parseInt(limit, 10)));
+    const q = typeof rawQuery === "string" ? rawQuery.trim() : "";
+    const pageNumber = Math.max(1, toSafeInt(page, 1));
+    const take = Math.max(1, Math.min(100, toSafeInt(limit, 20)));
+    const skip = (pageNumber - 1) * take;
 
     const personalOnly = String(personal || "").toLowerCase() === "true";
-    const filter = personalOnly
-      ? { isActive: true, ownerId: new mongoose.Types.ObjectId(userId) }
-      : {
-        isActive: true,
-        $or: [{ ownerId: null }, { ownerId: new mongoose.Types.ObjectId(userId) }],
-      };
+    const filter = await buildVocabularySearchFilter(
+      buildAccessibleVocabularySetFilter(userId, { personalOnly }),
+      q
+    );
     if (level) filter.level = String(level);
     if (topic) filter.topic = String(topic);
 
@@ -749,31 +810,21 @@ const listVocabularies = async (req, res) => {
 
     const items = sets.map((set) => {
       const words = wordsMap.get(String(set._id)) || [];
-      const normalized = normalizeVocabularySetForUser(set, words);
-      if (q) {
-        const matchWord = words.some(
-          (w) =>
-            w.word.toLowerCase().includes(q) ||
-            w.meaning.toLowerCase().includes(q) ||
-            (w.example || "").toLowerCase().includes(q)
-        );
-        if (!matchWord && !set.name.toLowerCase().includes(q)) return null;
-      }
       return {
-        ...normalized,
+        ...normalizeVocabularySetForUser(set, words),
         quizMastered: masteredSetIds.has(String(set._id)),
       };
-    }).filter(Boolean);
+    });
 
     return res.status(200).json({
       success: true,
       data: {
         items,
         pagination: {
-          page: parseInt(page, 10),
+          page: pageNumber,
           limit: take,
           total,
-          totalPages: Math.ceil(total / take),
+          totalPages: Math.max(1, Math.ceil(total / take)),
         },
       },
     });
@@ -793,16 +844,7 @@ const getVocabularyFilters = async (req, res) => {
     }
 
     const personalOnly = String(req.query?.personal || "").toLowerCase() === "true";
-    const filter = personalOnly
-      ? { isActive: true, ownerId: new mongoose.Types.ObjectId(userId) }
-      : {
-        isActive: true,
-        $or: [
-          { ownerId: null },
-          { ownerId: { $exists: false } },
-          { ownerId: new mongoose.Types.ObjectId(userId) },
-        ],
-      };
+    const filter = buildAccessibleVocabularySetFilter(userId, { personalOnly });
 
     const sets = await VocabularySet.find(filter)
       .select("level topic")
@@ -845,23 +887,58 @@ const getVocabularyFilters = async (req, res) => {
   }
 };
 
-const getVocabularySummary = async (_req, res) => {
+const getVocabularySummary = async (req, res) => {
   try {
     const { VocabularySet: VS, Vocabulary: V, VocabularyAttempt: VA } = mongoose.models;
+    const userId = req.user?.id;
 
-    const catalogSets = await VS.find({ isActive: true, ownerId: null })
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const personalOnly = String(req.query?.personal || "").toLowerCase() === "true";
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    const accessibleSets = await VS.find(
+      buildAccessibleVocabularySetFilter(userId, { personalOnly })
+    )
       .select("_id")
       .lean();
-    const setIds = catalogSets.map((s) => s._id);
+    const setIds = accessibleSets.map((s) => s._id);
 
     const totalSets = setIds.length;
     const totalWords = setIds.length
       ? await V.countDocuments({ setId: { $in: setIds } })
       : 0;
 
-    // Keep existing dashboard semantics, but based on catalog-only sets.
-    const masteredCount = setIds.length;
-    const learningCount = Math.max(0, totalWords - masteredCount);
+    const attempts = setIds.length
+      ? await VA.find({
+        userId: userObjectId,
+        setId: { $in: setIds },
+      })
+        .select("setId mode score total")
+        .lean()
+      : [];
+
+    const attemptedSetIds = new Set();
+    const masteredSetIds = new Set();
+
+    attempts.forEach((attempt) => {
+      const setId = String(attempt.setId);
+      attemptedSetIds.add(setId);
+      if (
+        attempt.mode === "quiz" &&
+        Number(attempt.total) > 0 &&
+        Number(attempt.score) === Number(attempt.total)
+      ) {
+        masteredSetIds.add(setId);
+      }
+    });
+
+    const masteredCount = masteredSetIds.size;
+    const learningCount = Array.from(attemptedSetIds).filter(
+      (setId) => !masteredSetIds.has(setId)
+    ).length;
+    const newCount = Math.max(0, totalSets - masteredCount - learningCount);
 
     return res.status(200).json({
       success: true,
@@ -870,7 +947,7 @@ const getVocabularySummary = async (_req, res) => {
         totalWords,
         masteredCount,
         learningCount,
-        newCount: 0,
+        newCount,
       },
     });
   } catch (error) {
@@ -925,8 +1002,7 @@ const getRecommendedVocabularies = async (req, res) => {
 
     // Get all vocabulary sets at target levels
     const allSets = await VocabularySet.find({
-      isActive: true,
-      ownerId: null,
+      ...buildCatalogVocabularySetFilter(),
       level: { $in: targetLevels }
     })
       .sort({ sortOrder: 1, updatedAt: -1 })
@@ -1018,8 +1094,7 @@ const getVocabularyById = async (req, res) => {
     const words = await Vocabulary.find({ setId: set._id }).lean();
 
     const relatedSets = await VocabularySet.find({
-      isActive: true,
-      ownerId: null,
+      ...buildCatalogVocabularySetFilter(),
       _id: { $ne: set._id },
       topic: set.topic,
     })

@@ -21,7 +21,7 @@ import {
   unlockMapsAfterPrerequisiteCompleted,
 } from "./learn-map-progress.service.js";
 import { createInboxNotificationForUser } from "./inbox-notification.service.js";
-import { tryGrantFirstBossWin } from "./learn-achievement.service.js";
+import { tryGrantAchievementById } from "./learn-achievement.service.js";
 import {
   getMapRequiredXP,
   getStepMinimumAverageTurnScore,
@@ -521,6 +521,7 @@ export async function endConversation(userId, conversationId) {
   );
 
   const requiredMapXP = getMapRequiredXP(map);
+  let awardedAchievement = null;
 
   if (passed && isCurrentProgressStep) {
     const mapStatusBefore = progress.status;
@@ -564,6 +565,15 @@ export async function endConversation(userId, conversationId) {
       mapStatusBefore !== "completed" &&
       map?.title
     ) {
+      if (map.completionAchievementId) {
+        const achievementGrant = await tryGrantAchievementById(userId, map.completionAchievementId, {
+          mapId: String(map._id),
+        });
+        if (achievementGrant?.newlyEarned) {
+          awardedAchievement = achievementGrant.achievement;
+        }
+      }
+
       try {
         await createInboxNotificationForUser(String(userId), {
           title: "Hoàn thành lộ trình học",
@@ -574,10 +584,6 @@ export async function endConversation(userId, conversationId) {
       } catch (err) {
         console.error("[Inbox] map completed", err?.message || err);
       }
-    }
-
-    if (step.type === "boss" && bossWin) {
-      await tryGrantFirstBossWin(userId);
     }
   } else if (!passed && step.type === "boss" && !isReplayAttempt) {
     progress.bossAttempts = (progress.bossAttempts || 0) + 1;
@@ -595,6 +601,7 @@ export async function endConversation(userId, conversationId) {
     requiredMapXP,
     currentMapXP: progress.totalXPEarned || 0,
     mapCompleted: progress.status === "completed",
+    awardedAchievement,
     replayAttempt: isReplayAttempt,
   };
 }
