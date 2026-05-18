@@ -8,14 +8,11 @@ import {
 import { createInboxNotificationForUser } from "./inbox-notification.service.js";
 
 /**
- * Grant achievement by trigger key if not already earned. Adds XP to user.exp.
+ * Grant achievement if not already earned. Adds XP to user.exp.
  */
-export async function tryGrantAchievementByKey(userId, key) {
-  if (!key) return null;
+async function grantAchievement(userId, achievement, meta = {}) {
+  if (!achievement?._id) return null;
   const uid = new mongoose.Types.ObjectId(userId);
-
-  const achievement = await LearnAchievement.findOne({ key }).lean();
-  if (!achievement) return null;
 
   const existing = await UserLearnAchievement.findOne({
     userId: uid,
@@ -42,7 +39,7 @@ export async function tryGrantAchievementByKey(userId, key) {
       title: "Thành tích mới",
       body: [achievement.title, achievement.description].filter(Boolean).join(" — "),
       category: "milestone",
-      meta: { kind: "achievement", key: achievement.key },
+      meta: { kind: "achievement", key: achievement.key, ...meta },
     });
   } catch (err) {
     console.error("[Inbox] achievement", err?.message || err);
@@ -51,8 +48,19 @@ export async function tryGrantAchievementByKey(userId, key) {
   return { newlyEarned: true, achievement };
 }
 
-export async function tryGrantFirstBossWin(userId) {
-  return tryGrantAchievementByKey(userId, "first_boss_win");
+export async function tryGrantAchievementByKey(userId, key, meta = {}) {
+  if (!key) return null;
+  const achievement = await LearnAchievement.findOne({ key }).lean();
+  return grantAchievement(userId, achievement, meta);
+}
+
+export async function tryGrantAchievementById(userId, achievementId, meta = {}) {
+  if (!achievementId || !mongoose.Types.ObjectId.isValid(achievementId)) {
+    return null;
+  }
+
+  const achievement = await LearnAchievement.findById(achievementId).lean();
+  return grantAchievement(userId, achievement, meta);
 }
 
 export async function listUserAchievements(userId) {

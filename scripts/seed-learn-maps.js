@@ -16,17 +16,17 @@ import { recalculateMapTotalXP } from "../services/learn-map-progress.service.js
 const run = async () => {
   await connectDatabase();
 
-  await LearnAchievement.findOneAndUpdate(
+  const firstBossAchievement = await LearnAchievement.findOneAndUpdate(
     { key: "first_boss_win" },
     {
       key: "first_boss_win",
       title: "First boss win",
       description: "Defeat your first boss battle.",
-      iconUrl: "",
-      trigger: "first_boss_win",
+      iconUrl: "/badges/boss-crown.svg",
+      trigger: "map_completion",
       xpReward: 100,
     },
-    { upsert: true }
+    { upsert: true, new: true }
   );
 
   let map1 = await Map.findOne({ slug: "airport-101" });
@@ -44,8 +44,14 @@ const run = async () => {
       totalXP: 0,
       requiredXPToComplete: 0,
       bossXPReward: 60,
+      completionAchievementId: firstBossAchievement._id,
       unlocksMapId: null,
     });
+  }
+
+  if (!map1.completionAchievementId) {
+    map1.completionAchievementId = firstBossAchievement._id;
+    await map1.save();
   }
 
   let map2 = await Map.findOne({ slug: "city-explorer" });

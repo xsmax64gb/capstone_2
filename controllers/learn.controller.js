@@ -99,11 +99,27 @@ const serializeMap = (m) => ({
   order: m.order,
   prerequisiteMapId: m.prerequisiteMapId ? String(m.prerequisiteMapId) : null,
   unlocksMapId: m.unlocksMapId ? String(m.unlocksMapId) : null,
+  completionAchievementId: m.completionAchievementId
+    ? String(m.completionAchievementId)
+    : null,
   totalXP: m.totalXP,
   requiredXPToComplete: getMapRequiredXP(m),
   bossXPReward: m.bossXPReward,
   isPublished: m.isPublished,
 });
+
+const serializeAchievement = (a) =>
+  a
+    ? {
+      id: toId(a),
+      key: a.key,
+      title: a.title,
+      description: a.description,
+      iconUrl: a.iconUrl,
+      trigger: a.trigger,
+      xpReward: a.xpReward,
+    }
+    : null;
 
 const serializeProgress = (p) =>
   p
@@ -147,6 +163,12 @@ const serializeBossBattle = (battle) =>
     : null;
 
 const normalizeString = (value) => String(value || "").trim();
+
+const normalizeOptionalObjectId = (value) => {
+  const normalized = normalizeString(value);
+  if (!normalized) return null;
+  return mongoose.Types.ObjectId.isValid(normalized) ? normalized : null;
+};
 
 const truncateText = (value, maxLength = 160) => {
   const normalized = normalizeString(value).replace(/\s+/g, " ");
@@ -593,6 +615,7 @@ export const postEndLearnConversation = async (req, res) => {
         mapCompleted: result.mapCompleted,
         currentMapXP: result.currentMapXP,
         requiredMapXP: result.requiredMapXP,
+        awardedAchievement: serializeAchievement(result.awardedAchievement),
         replayAttempt: result.replayAttempt,
       },
     });
@@ -661,6 +684,7 @@ export const getMyLearnAchievements = async (req, res) => {
       earnedAt: r.earnedAt,
       achievement: r.achievementId
         ? {
+          id: toId(r.achievementId),
           key: r.achievementId.key,
           title: r.achievementId.title,
           description: r.achievementId.description,
@@ -740,6 +764,7 @@ export const adminCreateLearnMap = async (req, res) => {
       totalXP: 0,
       requiredXPToComplete: normalizePositiveInt(body.requiredXPToComplete, 0, 0),
       bossXPReward: Number(body.bossXPReward) || 0,
+      completionAchievementId: normalizeOptionalObjectId(body.completionAchievementId),
       unlocksMapId: body.unlocksMapId || null,
     });
     const recalculated = await recalculateMapTotalXP(map._id);
@@ -786,6 +811,9 @@ export const adminUpdateLearnMap = async (req, res) => {
         }),
         ...(body.bossXPReward !== undefined && {
           bossXPReward: Number(body.bossXPReward),
+        }),
+        ...(body.completionAchievementId !== undefined && {
+          completionAchievementId: normalizeOptionalObjectId(body.completionAchievementId),
         }),
         ...(body.unlocksMapId !== undefined && {
           unlocksMapId: body.unlocksMapId || null,
@@ -1003,15 +1031,7 @@ export const adminListAchievements = async (_req, res) => {
     return res.json({
       success: true,
       data: {
-        items: items.map((a) => ({
-          id: toId(a),
-          key: a.key,
-          title: a.title,
-          description: a.description,
-          iconUrl: a.iconUrl,
-          trigger: a.trigger,
-          xpReward: a.xpReward,
-        })),
+        items: items.map(serializeAchievement),
       },
     });
   } catch (error) {

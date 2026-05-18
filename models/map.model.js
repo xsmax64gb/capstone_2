@@ -19,6 +19,11 @@ const mapSchema = new mongoose.Schema(
     totalXP: { type: Number, default: 0, min: 0 },
     requiredXPToComplete: { type: Number, default: 0, min: 0 },
     bossXPReward: { type: Number, default: 0, min: 0 },
+    completionAchievementId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "LearnAchievement",
+      default: null,
+    },
     unlocksMapId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Map",
