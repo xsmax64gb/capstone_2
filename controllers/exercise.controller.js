@@ -393,6 +393,42 @@ const toIsoDate = (value) => {
     return date.toISOString();
 };
 
+const serializeExerciseQuestionForAdmin = (question, index) => {
+    const options = Array.isArray(question?.options)
+        ? question.options.map((item) => String(item ?? "").trim()).filter(Boolean)
+        : [];
+    let correctIndex = 0;
+
+    if (typeof question?.correctIndex === "number") {
+        correctIndex = question.correctIndex;
+    } else if (typeof question?.correctAnswer === "number") {
+        correctIndex = question.correctAnswer;
+    } else if (typeof question?.correctAnswer === "string") {
+        const normalizedAnswer = question.correctAnswer.trim().toLowerCase();
+        const foundIndex = options.findIndex(
+            (option) => option.toLowerCase() === normalizedAnswer
+        );
+        correctIndex = foundIndex >= 0 ? foundIndex : 0;
+    }
+
+    if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= options.length) {
+        correctIndex = 0;
+    }
+
+    const prompt = String(question?.prompt ?? question?.question ?? "").trim();
+
+    return {
+        id: String(question?._id || `q_${index + 1}`),
+        prompt,
+        question: String(question?.question ?? prompt).trim(),
+        options,
+        correctIndex,
+        correctAnswer: options[correctIndex] || "",
+        explanation: String(question?.explanation ?? "").trim(),
+        score: Math.max(1, toSafeInt(question?.score, 1)),
+    };
+};
+
 const serializeExercise = (exercise) => ({
     id: String(exercise._id),
     title: exercise.title,
@@ -410,6 +446,9 @@ const serializeExercise = (exercise) => ({
             : Array.isArray(exercise.questions)
                 ? exercise.questions.length
                 : 0,
+    questions: Array.isArray(exercise.questions)
+        ? exercise.questions.map(serializeExerciseQuestionForAdmin)
+        : [],
     createdAt: toIsoDate(exercise.createdAt),
     updatedAt: toIsoDate(exercise.updatedAt),
 });
