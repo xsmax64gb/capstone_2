@@ -14,6 +14,8 @@ import { bootstrapPaymentSyncScheduler } from "./services/payment-sync-scheduler
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+app.set("etag", false);
+
 const defaultCorsOrigins = [
   "http://localhost:3000",
   "https://smartlingo-flax.vercel.app",
@@ -71,6 +73,10 @@ app.get("/", (_req, res) => {
 });
 
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
 app.use("/api", apiRoutes);
 
 app.use((req, res) => {

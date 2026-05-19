@@ -23,6 +23,7 @@ import {
 import {
   createAdminExercise,
   deleteAdminExercise,
+  getAdminExerciseById,
   getAdminExercises,
   getExerciseById,
   getExerciseFilters,
@@ -118,6 +119,7 @@ export {
   generateExerciseAiFromPdf,
   generateExerciseAiFromPrompt,
   getActivePlacementTest,
+  getAdminExerciseById,
   getAdminExercises,
   getAdminOverview,
   getAdminPlacementTestById,

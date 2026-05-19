@@ -9,6 +9,7 @@ import {
   adminDeleteStep,
   adminGenerateLearnMapDraft,
   adminGenerateStepDraft,
+  adminGetLearnMap,
   adminListAchievements,
   adminListLearnMaps,
   adminListSteps,
@@ -70,6 +71,7 @@ router.post(
   requireAdmin,
   adminGenerateLearnMapDraft
 );
+router.get("/admin/learn/maps/:id", requireAuth, requireAdmin, adminGetLearnMap);
 router.post("/admin/learn/maps", requireAuth, requireAdmin, adminCreateLearnMap);
 router.put("/admin/learn/maps/:id", requireAuth, requireAdmin, adminUpdateLearnMap);
 router.delete("/admin/learn/maps/:id", requireAuth, requireAdmin, adminDeleteLearnMap);
