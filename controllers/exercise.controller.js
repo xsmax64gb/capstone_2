@@ -1352,6 +1352,37 @@ const getAdminExercises = async (_req, res) => {
     }
 };
 
+const getAdminExerciseById = async (req, res) => {
+    try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid exercise id",
+            });
+        }
+
+        const exercise = await Exercise.findById(req.params.id).lean();
+
+        if (!exercise) {
+            return res.status(404).json({
+                success: false,
+                message: "Exercise not found",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Admin exercise fetched successfully",
+            data: serializeExercise(exercise),
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message || "Failed to fetch admin exercise",
+        });
+    }
+};
+
 const createAdminExercise = async (req, res) => {
     try {
         const {
@@ -1474,6 +1505,7 @@ const deleteAdminExercise = async (req, res) => {
 export {
     createAdminExercise,
     deleteAdminExercise,
+    getAdminExerciseById,
     getAdminExercises,
     getExerciseById,
     getExerciseFilters,

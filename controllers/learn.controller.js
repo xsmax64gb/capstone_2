@@ -164,10 +164,20 @@ const serializeBossBattle = (battle) =>
 
 const normalizeString = (value) => String(value || "").trim();
 
-const normalizeOptionalObjectId = (value) => {
+const resolveOptionalAchievementId = async (value) => {
   const normalized = normalizeString(value);
-  if (!normalized) return null;
-  return mongoose.Types.ObjectId.isValid(normalized) ? normalized : null;
+  if (!normalized) return { value: null };
+
+  if (!mongoose.Types.ObjectId.isValid(normalized)) {
+    return { error: "Invalid completionAchievementId" };
+  }
+
+  const exists = await LearnAchievement.exists({ _id: normalized });
+  if (!exists) {
+    return { error: "Completion achievement not found" };
+  }
+
+  return { value: normalized };
 };
 
 const truncateText = (value, maxLength = 160) => {
@@ -715,6 +725,28 @@ export const adminListLearnMaps = async (_req, res) => {
   }
 };
 
+export const adminGetLearnMap = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid map id" });
+    }
+
+    const map = await LearnMap.findById(id).lean();
+    if (!map) {
+      return res.status(404).json({ success: false, message: "Not found" });
+    }
+
+    return res.json({
+      success: true,
+      data: { map: serializeMap(map) },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const adminGenerateLearnMapDraft = async (req, res) => {
   try {
     const input = normalizeGenerateLearnMapRequest(req.body);
@@ -751,6 +783,16 @@ export const adminCreateLearnMap = async (req, res) => {
     if (!body.title || !slug) {
       return res.status(400).json({ success: false, message: "title and slug required" });
     }
+    const completionAchievement = await resolveOptionalAchievementId(
+      body.completionAchievementId
+    );
+    if (completionAchievement.error) {
+      return res.status(400).json({
+        success: false,
+        message: completionAchievement.error,
+      });
+    }
+
     const map = await LearnMap.create({
       title: String(body.title).trim(),
       slug,
@@ -764,7 +806,7 @@ export const adminCreateLearnMap = async (req, res) => {
       totalXP: 0,
       requiredXPToComplete: normalizePositiveInt(body.requiredXPToComplete, 0, 0),
       bossXPReward: Number(body.bossXPReward) || 0,
-      completionAchievementId: normalizeOptionalObjectId(body.completionAchievementId),
+      completionAchievementId: completionAchievement.value,
       unlocksMapId: body.unlocksMapId || null,
     });
     const recalculated = await recalculateMapTotalXP(map._id);
@@ -781,6 +823,17 @@ export const adminUpdateLearnMap = async (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body;
+    const completionAchievement =
+      body.completionAchievementId !== undefined
+        ? await resolveOptionalAchievementId(body.completionAchievementId)
+        : null;
+    if (completionAchievement?.error) {
+      return res.status(400).json({
+        success: false,
+        message: completionAchievement.error,
+      });
+    }
+
     const map = await LearnMap.findByIdAndUpdate(
       id,
       {
@@ -812,8 +865,8 @@ export const adminUpdateLearnMap = async (req, res) => {
         ...(body.bossXPReward !== undefined && {
           bossXPReward: Number(body.bossXPReward),
         }),
-        ...(body.completionAchievementId !== undefined && {
-          completionAchievementId: normalizeOptionalObjectId(body.completionAchievementId),
+        ...(completionAchievement && {
+          completionAchievementId: completionAchievement.value,
         }),
         ...(body.unlocksMapId !== undefined && {
           unlocksMapId: body.unlocksMapId || null,

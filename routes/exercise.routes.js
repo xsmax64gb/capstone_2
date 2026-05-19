@@ -7,6 +7,7 @@ import {
     deleteUserAiExercise,
     generateExerciseAiFromPdf,
     generateExerciseAiFromPrompt,
+    getAdminExerciseById,
     getAdminExercises,
     getExerciseById,
     getExerciseFilters,
@@ -69,6 +70,7 @@ const router = express.Router();
  *         description: Exercises fetched successfully
  */
 router.get("/admin/exercises", requireAuth, requireAdmin, getAdminExercises);
+router.get("/admin/exercises/:id", requireAuth, requireAdmin, getAdminExerciseById);
 router.post(
     "/admin/exercises",
     requireAuth,
